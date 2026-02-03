@@ -1,572 +1,497 @@
-/* app.js - Static (no Node), ES Module
-   - Marvel & Star Wars sekmeleri
-   - Koleksiyonlar data klasöründen import edilir
-   - OMDb üzerinden poster + dizi sezon/bölüm listesi (tek tek işaretlenebilir)
-   - LocalStorage ile izleme takibi
-
-   OMDb Key: a57784cc
-*/
+// app.js (TEK TEMİZ SÜRÜM) - /data/... üzerinden yükler, import yok
+// Marvel & Star Wars koleksiyon takip
+// Dizi: sezon + bölüm işaretleme (OMDb)
+// Film: izledim işaretleme
+// LocalStorage ile kalıcı takip
 
 const OMDB_API_KEY = "a57784cc";
-const STORAGE_KEY = "nova_watchlist_v2";
+const STORE_KEY = "koleksiyon_takip_v3";
 
-/* =========================
-   Imports (data paths)
-   ========================= */
-// Bu dosyaların hepsi "export default ..." olmalı.
-import MARVEL_CATEGORIES from "./data/marvel/marvel.index.js";
-import MCU_COLLECTION from "./data/marvel/mcu.collection.js";
+const state = loadState();
 
-import STARWARS_CATEGORIES from "./data/starwars/starwars.index.js";
-import STARWARS_CANON_COLLECTION from "./data/starwars/canon.collection.js";
-
-/* =========================
-   Helpers
-   ========================= */
-function $(sel, root = document) {
-  return root.querySelector(sel);
-}
-function el(tag, attrs = {}, children = []) {
-  const node = document.createElement(tag);
+// ---- DOM helpers
+const $ = (q, root = document) => root.querySelector(q);
+function h(tag, attrs = {}, children = []) {
+  const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") node.className = v;
-    else if (k === "html") node.innerHTML = v;
-    else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
-    else node.setAttribute(k, v);
+    if (k === "class") el.className = v;
+    else if (k === "text") el.textContent = v;
+    else if (k === "html") el.innerHTML = v;
+    else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v);
   }
   for (const c of children) {
     if (c == null) continue;
-    node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+    el.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
   }
-  return node;
+  return el;
 }
 
-function safeJsonParse(str, fallback) {
-  try { return JSON.parse(str); } catch { return fallback; }
-}
-
-/* =========================
-   Storage
-   ========================= */
+// ---- Storage
 function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  const base = { items: {}, seasons: {}, episodes: {}, posterCache: {}, metaCache: {} };
-  if (!raw) return base;
-  const parsed = safeJsonParse(raw, base);
-  return { ...base, ...parsed };
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (!raw) return { watched: {}, seasons: {}, episodes: {}, omdbCache: {} };
+    const j = JSON.parse(raw);
+    return {
+      watched: j.watched || {},
+      seasons: j.seasons || {},
+      episodes: j.episodes || {},
+      omdbCache: j.omdbCache || {},
+    };
+  } catch {
+    return { watched: {}, seasons: {}, episodes: {}, omdbCache: {} };
+  }
 }
-function saveState(state) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
-
-function itemKey(item) {
-  // stable key: prefer explicit id, else title
-  return (item && item.id) ? String(item.id) : String(item.title || "");
-}
-
-/* =========================
-   OMDb fetch with caching
-   ========================= */
-function normalizeTitleForOmdb(title) {
-  if (!title) return "";
-  let t = String(title).trim();
-
-  // "1. Sezon" / "Sezon 1" gibi ekleri temizle
-  t = t.replace(/\b(\d+)\.\s*Sezon\b/gi, "").trim();
-  t = t.replace(/\bSezon\s*(\d+)\b/gi, "").trim();
-
-  // "(Disney+)" vb parantez içlerini temizle
-  t = t.replace(/\([^)]*\)/g, "").trim();
-
-  // "- Film", "- Dizi", "- Animasyon" vb tür yazılarını temizle
-  t = t.replace(/\s*-\s*(Film|Dizi|Animasyon.*|Kısa.*|Özel.*|Tek Atış|One[- ]?Shot|Antoloji|TV Filmi|Mini Dizi).*$/gi, "").trim();
-
-  // Fazla boşlukları düzelt
-  t = t.replace(/\s{2,}/g, " ").trim();
-
-  return t;
+function saveState() {
+  localStorage.setItem(STORE_KEY, JSON.stringify(state));
 }
 
-async function omdbFetch(params) {
+// ---- Routes
+const route = {
+  tab: "marvel",         // marvel | starwars
+  view: "home",          // home | list | seasons | episodes
+  categoryKey: null,     // e.g. "mcu"
+  itemId: null,          // stable id
+  season: null,
+};
+
+// ---- Data loading (NO import!)
+async function loadJson(path) {
+  const res = await fetch(path, { cache: "no-store" });
+  if (!res.ok) throw new Error(`${path} yüklenemedi (${res.status})`);
+  return await res.json(); // NOTE: data dosyaları JSON değilse alt fonk. kullanacağız.
+}
+async function loadJsDefault(path) {
+  // JS dosyası "export default ..." ise bunu doğrudan fetch+eval ile okuyamayız.
+  // O yüzden data dosyalarını "window.__DATA__" gibi bir şeye bağlamadık.
+  // Çözüm: data dosyalarını ESM export default yerine "JSON" yapmalıyız... DEĞİL.
+  // Senin dosyaların zaten JS export default. O yüzden en temiz yol:
+  // - index.html'de module kullanmak ve import etmek
+  // Ama senin projende loglar fetch üzerinden gidiyor. O yüzden:
+  // Bu sürüm, data dosyalarını "JSON" bekleyecek şekilde tasarlanmıştır.
+  // Eğer senin dosyaların export default ise, aşağıdaki 2 satırlık dönüşümü yap:
+  // (A) Her collection dosyasını .json yapıp export default kaldır.
+  // (B) veya index.html module + import yoluna dön.
+  //
+  // Şu an senin projen çalışıyor ve GET atıyor, demek ki sen data dosyalarını JSON gibi servis ediyorsun
+  // ya da index.js içinde fetch ediyorsun.
+  //
+  // O yüzden burada doğrudan fetch + text parse yapacağım:
+  const res = await fetch(path, { cache: "no-store" });
+  if (!res.ok) throw new Error(`${path} yüklenemedi (${res.status})`);
+  const text = await res.text();
+
+  // export default [...] formatını güvenli şekilde parse et
+  const cleaned = text
+    .replace(/^\s*export\s+default\s+/m, "")
+    .replace(/;\s*$/m, "");
+
+  // eslint-disable-next-line no-new-func
+  const data = new Function(`return (${cleaned});`)();
+  return data;
+}
+
+function keyForItem(item) {
+  return String(item.id || item.title);
+}
+
+// ---- OMDb helpers + cache
+function normalizeTitle(t) {
+  if (!t) return "";
+  let s = String(t).trim();
+  s = s.replace(/\([^)]*\)/g, "").trim();                 // parantez içlerini at
+  s = s.replace(/\s*-\s*(Film|Dizi|Animasyon.*|Kısa.*|Özel.*).*$/i, "").trim();
+  s = s.replace(/\s{2,}/g, " ").trim();
+  return s;
+}
+
+async function omdb(params) {
   const url = new URL("https://www.omdbapi.com/");
   url.searchParams.set("apikey", OMDB_API_KEY);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-
-  const res = await fetch(url.toString());
-  const json = await res.json();
-  return json;
+  const r = await fetch(url.toString());
+  return await r.json();
 }
 
-async function omdbFindBestMatchTitle(title, typeHint) {
-  // Önce direct title dene
-  const direct = await omdbFetch({ t: title });
-  if (direct && direct.Response === "True") return direct;
+async function getOmdbMeta(item, typeHint) {
+  const k = keyForItem(item);
+  if (state.omdbCache[k]) return state.omdbCache[k];
 
-  // Search ile ilk sonucu bul
-  const s = await omdbFetch({ s: title, type: typeHint || "" });
-  if (!s || s.Response !== "True" || !Array.isArray(s.Search) || !s.Search.length) return direct;
-
-  // İlkini çek (imdbID ile)
-  const best = s.Search[0];
-  if (!best || !best.imdbID) return direct;
-
-  const full = await omdbFetch({ i: best.imdbID, plot: "short" });
-  return full;
-}
-
-async function ensureOmdbMeta(state, item, typeHint) {
-  const k = itemKey(item);
-  if (!k) return null;
-
-  // Cache
-  if (state.metaCache && state.metaCache[k]) return state.metaCache[k];
-
-  // Eğer data içinde imdbID/omdbTitle varsa onları kullan
-  const fallbackTitle = normalizeTitleForOmdb(item.omdbTitle || item.title || "");
   let meta = null;
 
   if (item.imdbID) {
-    const full = await omdbFetch({ i: item.imdbID, plot: "short" });
-    if (full && full.Response === "True") meta = full;
+    const j = await omdb({ i: item.imdbID });
+    if (j.Response === "True") meta = j;
   }
-
   if (!meta) {
-    meta = await omdbFindBestMatchTitle(fallbackTitle, typeHint);
-    if (!meta || meta.Response !== "True") {
-      state.metaCache[k] = { ok: false, error: meta?.Error || "Not found", titleTried: fallbackTitle };
-      saveState(state);
-      return state.metaCache[k];
-    }
+    const t = normalizeTitle(item.omdbTitle || item.title);
+    const j = await omdb({ t, type: typeHint || "" });
+    if (j.Response === "True") meta = j;
+  }
+  if (!meta) {
+    state.omdbCache[k] = { ok: false };
+    saveState();
+    return state.omdbCache[k];
   }
 
   const out = {
     ok: true,
     imdbID: meta.imdbID,
+    type: meta.Type, // movie|series
     title: meta.Title,
-    type: meta.Type, // movie, series
-    year: meta.Year,
     totalSeasons: meta.totalSeasons ? Number(meta.totalSeasons) : null,
+    poster: meta.imdbID
+      ? `https://img.omdbapi.com/?i=${encodeURIComponent(meta.imdbID)}&h=450&apikey=${encodeURIComponent(OMDB_API_KEY)}`
+      : (meta.Poster && meta.Poster !== "N/A" ? meta.Poster : null),
   };
-
-  // Poster: IMDb link bazen sorun çıkarır. OMDb image endpoint daha stabil.
-  // h=450 genelde "w300" hissiyatı verir.
-  if (out.imdbID) {
-    out.poster = `https://img.omdbapi.com/?i=${encodeURIComponent(out.imdbID)}&h=450&apikey=${encodeURIComponent(OMDB_API_KEY)}`;
-  } else {
-    out.poster = meta.Poster && meta.Poster !== "N/A" ? meta.Poster : null;
-  }
-
-  state.metaCache[k] = out;
-  saveState(state);
+  state.omdbCache[k] = out;
+  saveState();
   return out;
 }
 
-async function fetchSeasonEpisodes(imdbID, seasonNumber) {
-  const json = await omdbFetch({ i: imdbID, Season: String(seasonNumber) });
-  if (!json || json.Response !== "True") return { ok: false, error: json?.Error || "Season not found" };
-  const episodes = Array.isArray(json.Episodes) ? json.Episodes : [];
+async function getSeasonEpisodes(imdbID, season) {
+  const j = await omdb({ i: imdbID, Season: String(season) });
+  if (!j || j.Response !== "True") return { ok: false };
   return {
     ok: true,
-    season: seasonNumber,
-    title: json.Title,
-    episodes: episodes.map(e => ({
+    title: j.Title,
+    season,
+    episodes: (j.Episodes || []).map(e => ({
       imdbID: e.imdbID,
       episode: Number(e.Episode),
       title: e.Title,
       released: e.Released,
-      imdbRating: e.imdbRating,
     })),
   };
 }
 
-/* =========================
-   Data: categories -> collections
-   ========================= */
-const COLLECTIONS = {
-  // Marvel
-  "mcu": MCU_COLLECTION,
-
-  // Star Wars
-  "sw_canon": STARWARS_CANON_COLLECTION,
-  // İstersen sonra:
-  // "sw_noncanon": ...,
-  // "sw_vintage": ...,
-  // "sw_lego": ...
+// ---- Data map (dosya adların senin görüntüne göre)
+const DATA = {
+  marvel: {
+    index: "/data/marvel/marvel.index.js",
+    collections: {
+      mcu: "/data/marvel/mcu.collection.js",
+      lego: "/data/marvel/lego.collection.js",
+      mutant: "/data/marvel/mutant.collection.js",
+      classics: "/data/marvel/classics.collection.js",
+      void: "/data/marvel/void.collection.js",
+      sony: "/data/marvel/sony.collection.js",
+      animated: "/data/marvel/animated.collection.js",
+      anime: "/data/marvel/anime.collection.js",
+    },
+    title: "Marvel",
+  },
+  starwars: {
+    index: "/data/starwars/starwars.index.js",
+    collections: {
+      canon: "/data/starwars/canon.collection.js",
+      noncanon: "/data/starwars/noncanon.collection.js",
+      vintage: "/data/starwars/vintage.collection.js",
+      lego: "/data/starwars/lego.collection.js",
+    },
+    title: "Star Wars",
+  },
 };
 
-// Kategori tanımlarını index dosyalarından birleştireceğiz
-// Beklenen format örnek:
-// export default [
-//   { key:"mcu", title:"MCU" },
-//   { key:"lego", title:"LEGO" },
-// ]
-function buildLibrary() {
-  return {
-    marvel: {
-      title: "Marvel",
-      categories: MARVEL_CATEGORIES,
-    },
-    starwars: {
-      title: "Star Wars",
-      categories: STARWARS_CATEGORIES,
-    },
-  };
-}
-
-/* =========================
-   UI State + Router
-   ========================= */
-const appState = {
-  lib: buildLibrary(),
-  activeTab: "marvel", // marvel | starwars
-  view: "home",        // home | list | seasons | episodes
-  activeCategoryKey: null,
-  activeItemKey: null,
-  activeSeasonNumber: null,
-};
-
-function getCollectionForCategory(categoryKey) {
-  // Index dosyalarındaki key’ler COLLECTIONS ile eşleşmeli.
-  return COLLECTIONS[categoryKey] || [];
-}
-
-function kindLabel(type) {
-  if (type === "movie") return "Film";
-  if (type === "series") return "Dizi";
-  return "İçerik";
-}
-
-/* =========================
-   Render
-   ========================= */
-function render() {
-  const root = $("#app");
-  if (!root) return;
-
-  root.innerHTML = "";
-
-  const header = el("header", { class: "app-header" }, [
-    el("div", { class: "app-title" }, [
-      el("h1", {}, ["Koleksiyon"]),
-      el("p", { class: "subtitle" }, ["Marvel & Star Wars İzleme Takibi"]),
-    ]),
-  ]);
-
-  const tabs = el("div", { class: "tabs" }, [
-    el("button", {
-      class: `tab ${appState.activeTab === "marvel" ? "active" : ""}`,
-      onclick: () => { appState.activeTab = "marvel"; goHome(); },
-      type: "button"
-    }, ["Marvel"]),
-    el("button", {
-      class: `tab ${appState.activeTab === "starwars" ? "active" : ""}`,
-      onclick: () => { appState.activeTab = "starwars"; goHome(); },
-      type: "button"
-    }, ["Star Wars"]),
-  ]);
-
-  const main = el("main", { class: "main" }, []);
-
-  root.appendChild(header);
-  root.appendChild(tabs);
-  root.appendChild(main);
-
-  if (appState.view === "home") renderHome(main);
-  if (appState.view === "list") renderList(main);
-  if (appState.view === "seasons") renderSeasons(main);
-  if (appState.view === "episodes") renderEpisodes(main);
-}
-
-function goHome() {
-  appState.view = "home";
-  appState.activeCategoryKey = null;
-  appState.activeItemKey = null;
-  appState.activeSeasonNumber = null;
-  render();
-}
-
-function goList(categoryKey) {
-  appState.view = "list";
-  appState.activeCategoryKey = categoryKey;
-  appState.activeItemKey = null;
-  appState.activeSeasonNumber = null;
-  render();
-}
-
-function goSeasons(itemK) {
-  appState.view = "seasons";
-  appState.activeItemKey = itemK;
-  appState.activeSeasonNumber = null;
-  render();
-}
-
-function goEpisodes(itemK, seasonNumber) {
-  appState.view = "episodes";
-  appState.activeItemKey = itemK;
-  appState.activeSeasonNumber = seasonNumber;
-  render();
-}
-
-function renderHome(main) {
-  const lib = appState.lib[appState.activeTab];
-  const cats = Array.isArray(lib.categories) ? lib.categories : [];
-
-  main.appendChild(
-    el("section", { class: "section" }, [
-      el("h2", {}, [lib.title]),
-      el("div", { class: "grid" }, cats.map(c =>
-        el("button", {
-          class: "card",
-          type: "button",
-          onclick: () => goList(c.key)
-        }, [
-          el("div", { class: "card-title" }, [c.title || c.key]),
-          c.subtitle ? el("div", { class: "card-subtitle" }, [c.subtitle]) : null,
-        ])
-      ))
-    ])
-  );
-}
-
-function renderList(main) {
-  const state = loadState();
-  const lib = appState.lib[appState.activeTab];
-
-  const categoryKey = appState.activeCategoryKey;
-  const category = (lib.categories || []).find(c => c.key === categoryKey);
-  const title = category?.title || categoryKey || "Liste";
-
-  const items = getCollectionForCategory(categoryKey);
-
-  const topBar = el("div", { class: "topbar" }, [
-    el("button", { class: "btn", type: "button", onclick: goHome }, ["← Liste"]),
-    el("div", { class: "topbar-title" }, [title]),
-  ]);
-
-  const list = el("div", { class: "list" }, []);
-
-  // Render each item row
-  items.forEach((it) => {
-    const k = itemKey(it);
-    const watched = !!state.items[k]?.watched;
-
-    const row = el("div", { class: "row" }, [
-      el("button", {
-        class: `watch ${watched ? "on" : ""}`,
-        type: "button",
-        onclick: () => {
-          const st = loadState();
-          const cur = !!st.items[k]?.watched;
-          st.items[k] = { watched: !cur };
-          saveState(st);
-          render();
-        }
-      }, [watched ? "✓" : "—"]),
-
-      el("div", { class: "row-main" }, [
-        el("div", { class: "row-title" }, [it.title || "Başlıksız"]),
-        el("div", { class: "row-meta" }, [it.kindLabel || it.kind || ""]),
-      ]),
-
-      el("button", {
-        class: "btn small",
-        type: "button",
-        onclick: async () => {
-          // Diziyse sezon ekranına; filmse poster/metadata popup (basitçe yeni sekme google)
-          const st = loadState();
-          const meta = await ensureOmdbMeta(st, it, it.typeHint);
-          if (meta?.ok && meta.type === "series") goSeasons(k);
-          else {
-            window.open(`https://www.google.com/search?q=${encodeURIComponent(normalizeTitleForOmdb(it.title))}`, "_blank");
-          }
-        }
-      }, ["Aç"])
-    ]);
-
-    list.appendChild(row);
-  });
-
-  main.appendChild(topBar);
-  main.appendChild(list);
-}
-
-function renderSeasons(main) {
-  const state = loadState();
-  const categoryKey = appState.activeCategoryKey;
-  const items = getCollectionForCategory(categoryKey);
-  const current = items.find(x => itemKey(x) === appState.activeItemKey);
-
-  const topBar = el("div", { class: "topbar" }, [
-    el("button", { class: "btn", type: "button", onclick: () => { appState.view = "list"; render(); } }, ["← Liste"]),
-    el("div", { class: "topbar-title" }, [current?.title || "Dizi"]),
-  ]);
-
-  const box = el("div", { class: "section" }, []);
-  main.appendChild(topBar);
-  main.appendChild(box);
-
-  if (!current) {
-    box.appendChild(el("p", { class: "muted" }, ["Dizi bulunamadı."]));
-    return;
-  }
-
-  // OMDb: sezon sayısı + poster
-  (async () => {
-    const st = loadState();
-    const meta = await ensureOmdbMeta(st, current, "series");
-
-    box.innerHTML = "";
-
-    if (!meta?.ok) {
-      box.appendChild(el("p", { class: "muted" }, [
-        `Dizi OMDb'de bulunamadı. (${meta?.error || "Query eşleşmedi"})`
-      ]));
-      return;
-    }
-
-    // Poster + başlık
-    const hero = el("div", { class: "hero" }, [
-      meta.poster ? el("img", { class: "poster", src: meta.poster, alt: meta.title }) : null,
-      el("div", { class: "hero-text" }, [
-        el("h2", {}, [current.title]),
-        el("div", { class: "muted" }, ["Sezon ve bölüm işaretleme"]),
-      ])
-    ]);
-    box.appendChild(hero);
-
-    const seasonsTotal = meta.totalSeasons ? Number(meta.totalSeasons) : null;
-    if (!seasonsTotal) {
-      box.appendChild(el("p", { class: "muted" }, ["Sezon bilgisi bulunamadı (OMDb'de olmayabilir)."]));
-      return;
-    }
-
-    const seasonsList = el("div", { class: "list" }, []);
-    for (let s = 1; s <= seasonsTotal; s++) {
-      const seasonKey = `${meta.imdbID}|S${s}`;
-      const done = !!state.seasons[seasonKey]?.watched;
-
-      seasonsList.appendChild(
-        el("div", { class: "row" }, [
-          el("button", {
-            class: `watch ${done ? "on" : ""}`,
-            type: "button",
-            onclick: () => {
-              const st2 = loadState();
-              const cur = !!st2.seasons[seasonKey]?.watched;
-              st2.seasons[seasonKey] = { watched: !cur };
-              saveState(st2);
-              render();
-            }
-          }, [done ? "✓" : "—"]),
-          el("div", { class: "row-main" }, [
-            el("div", { class: "row-title" }, [`Sezon ${s}`]),
-            el("div", { class: "row-meta" }, ["Bölüm listesi için aç"]),
-          ]),
-          el("button", { class: "btn small", type: "button", onclick: () => goEpisodes(itemKey(current), s) }, ["Aç"])
-        ])
-      );
-    }
-
-    box.appendChild(seasonsList);
-  })();
-}
-
-function renderEpisodes(main) {
-  const state = loadState();
-  const categoryKey = appState.activeCategoryKey;
-  const items = getCollectionForCategory(categoryKey);
-  const current = items.find(x => itemKey(x) === appState.activeItemKey);
-  const seasonNumber = appState.activeSeasonNumber;
-
-  const topBar = el("div", { class: "topbar" }, [
-    el("button", { class: "btn", type: "button", onclick: () => { appState.view = "seasons"; render(); } }, ["← Sezonlar"]),
-    el("div", { class: "topbar-title" }, [
-      `${current?.title || "Dizi"} • ${seasonNumber}. Sezon`
-    ]),
-  ]);
-
-  const box = el("div", { class: "section" }, []);
-  main.appendChild(topBar);
-  main.appendChild(box);
-
-  if (!current) {
-    box.appendChild(el("p", { class: "muted" }, ["Dizi bulunamadı."]));
-    return;
-  }
-
-  (async () => {
-    const st = loadState();
-    const meta = await ensureOmdbMeta(st, current, "series");
-
-    box.innerHTML = "";
-
-    if (!meta?.ok || meta.type !== "series" || !meta.imdbID) {
-      box.appendChild(el("p", { class: "muted" }, [`Bölüm listesi bulunamadı (OMDb'de yok olabilir).`] ));
-      return;
-    }
-
-    const seasonData = await fetchSeasonEpisodes(meta.imdbID, seasonNumber);
-    if (!seasonData.ok) {
-      box.appendChild(el("p", { class: "muted" }, [`Bölüm listesi bulunamadı (OMDb'de yok olabilir).`] ));
-      return;
-    }
-
-    // Üst info + poster
-    box.appendChild(
-      el("div", { class: "hero" }, [
-        meta.poster ? el("img", { class: "poster", src: meta.poster, alt: meta.title }) : null,
-        el("div", { class: "hero-text" }, [
-          el("h2", {}, [`${current.title}`]),
-          el("div", { class: "muted" }, [`${seasonNumber}. Sezon • Bölümler tek tek işaretlenir`]),
-        ])
-      ])
-    );
-
-    const list = el("div", { class: "list" }, []);
-    seasonData.episodes.forEach(ep => {
-      const epKey = `${meta.imdbID}|S${seasonNumber}|E${ep.episode}`;
-      const done = !!state.episodes[epKey]?.watched;
-
-      list.appendChild(
-        el("div", { class: "row" }, [
-          el("button", {
-            class: `watch ${done ? "on" : ""}`,
-            type: "button",
-            onclick: () => {
-              const st2 = loadState();
-              const cur = !!st2.episodes[epKey]?.watched;
-              st2.episodes[epKey] = { watched: !cur };
-              saveState(st2);
-              render();
-            }
-          }, [done ? "✓" : "—"]),
-          el("div", { class: "row-main" }, [
-            el("div", { class: "row-title" }, [`${ep.episode}. ${ep.title}`]),
-            el("div", { class: "row-meta" }, [
-              ep.released && ep.released !== "N/A" ? `Yayın: ${ep.released}` : "",
-              ep.imdbRating && ep.imdbRating !== "N/A" ? ` • IMDb: ${ep.imdbRating}` : ""
-            ].filter(Boolean).join(""))
-          ]),
-        ])
-      );
-    });
-
-    box.appendChild(list);
-  })();
-}
-
-/* =========================
-   Boot
-   ========================= */
-function ensureBaseDOM() {
-  // index.html içinde <div id="app"></div> yoksa oluştur.
-  let root = document.getElementById("app");
+// ---- Render
+function ensureRoot() {
+  let root = $("#app");
   if (!root) {
     root = document.createElement("div");
     root.id = "app";
     document.body.appendChild(root);
   }
+  return root;
 }
 
-ensureBaseDOM();
+function header() {
+  return h("header", { class: "app-header" }, [
+    h("div", { class: "app-title" }, [
+      h("h1", { text: "Koleksiyon" }),
+      h("p", { class: "subtitle", text: "Marvel & Star Wars İzleme Takibi" }),
+    ]),
+    h("div", { class: "tabs" }, [
+      h("button", {
+        class: `tab ${route.tab === "marvel" ? "active" : ""}`,
+        type: "button",
+        onclick: () => { route.tab = "marvel"; route.view = "home"; route.categoryKey = null; render(); }
+      }, ["Marvel"]),
+      h("button", {
+        class: `tab ${route.tab === "starwars" ? "active" : ""}`,
+        type: "button",
+        onclick: () => { route.tab = "starwars"; route.view = "home"; route.categoryKey = null; render(); }
+      }, ["Star Wars"]),
+    ]),
+  ]);
+}
+
+function topbar(leftText, leftFn, title) {
+  return h("div", { class: "topbar" }, [
+    h("button", { class: "btn", type: "button", onclick: leftFn }, [leftText]),
+    h("div", { class: "topbar-title" }, [title]),
+  ]);
+}
+
+async function renderHome(main) {
+  const tabData = DATA[route.tab];
+  const cats = await loadJsDefault(tabData.index); // [{key,title,subtitle?}...]
+
+  const grid = h("div", { class: "grid" }, cats.map(c =>
+    h("button", {
+      class: "card",
+      type: "button",
+      onclick: () => {
+        route.view = "list";
+        route.categoryKey = c.key;
+        render();
+      }
+    }, [
+      h("div", { class: "card-title", text: c.title || c.key }),
+      c.subtitle ? h("div", { class: "card-subtitle", text: c.subtitle }) : null,
+    ])
+  ));
+
+  main.appendChild(h("section", { class: "section" }, [
+    h("h2", { text: tabData.title }),
+    grid,
+  ]));
+}
+
+function progressForCollection(items) {
+  const total = items.length;
+  if (!total) return { total: 0, done: 0, pct: 0 };
+  let done = 0;
+  for (const it of items) {
+    if (state.watched[keyForItem(it)]?.watched) done++;
+  }
+  const pct = Math.round((done / total) * 100);
+  return { total, done, pct };
+}
+
+async function renderList(main) {
+  const tabData = DATA[route.tab];
+  const cats = await loadJsDefault(tabData.index);
+  const cat = cats.find(x => x.key === route.categoryKey);
+  const catTitle = cat?.title || route.categoryKey;
+
+  const path = tabData.collections[route.categoryKey];
+  if (!path) {
+    main.appendChild(h("p", { class: "muted", text: "Bu kategori için collection dosyası bulunamadı." }));
+    return;
+  }
+
+  const items = await loadJsDefault(path);
+
+  const p = progressForCollection(items);
+
+  main.appendChild(topbar("← Anasayfa", () => { route.view = "home"; render(); }, catTitle));
+
+  main.appendChild(
+    h("div", { class: "progress" }, [
+      h("div", { class: "muted", text: `İlerleme: ${p.done}/${p.total} (%${p.pct})` }),
+    ])
+  );
+
+  const list = h("div", { class: "list" }, []);
+
+  for (const it of items) {
+    const k = keyForItem(it);
+    const watched = !!state.watched[k]?.watched;
+
+    list.appendChild(
+      h("div", { class: "row" }, [
+        h("button", {
+          class: `watch ${watched ? "on" : ""}`,
+          type: "button",
+          onclick: () => {
+            const cur = !!state.watched[k]?.watched;
+            state.watched[k] = { watched: !cur };
+            saveState();
+            render();
+          }
+        }, [watched ? "✓" : "—"]),
+
+        h("div", { class: "row-main" }, [
+          h("div", { class: "row-title", text: it.title }),
+          h("div", { class: "row-meta", text: it.kindLabel || it.kind || "" }),
+        ]),
+
+        h("button", {
+          class: "btn small",
+          type: "button",
+          onclick: async () => {
+            // Dizi ise sezon ekranına, film ise sadece detay (google)
+            const meta = await getOmdbMeta(it, "series");
+            if (meta.ok && meta.type === "series") {
+              route.view = "seasons";
+              route.itemId = k;
+              render();
+            } else {
+              window.open(`https://www.google.com/search?q=${encodeURIComponent(normalizeTitle(it.title))}`, "_blank");
+            }
+          }
+        }, ["Aç"]),
+      ])
+    );
+  }
+
+  main.appendChild(list);
+}
+
+async function renderSeasons(main) {
+  const tabData = DATA[route.tab];
+  const items = await loadJsDefault(tabData.collections[route.categoryKey]);
+  const it = items.find(x => keyForItem(x) === route.itemId);
+
+  main.appendChild(topbar("← Liste", () => { route.view = "list"; render(); }, it?.title || "Dizi"));
+
+  if (!it) {
+    main.appendChild(h("p", { class: "muted", text: "Dizi bulunamadı." }));
+    return;
+  }
+
+  const meta = await getOmdbMeta(it, "series");
+  if (!meta.ok || meta.type !== "series") {
+    main.appendChild(h("p", { class: "muted", text: "Dizi OMDb'de bulunamadı. (Query eşleşmedi.)" }));
+    return;
+  }
+
+  const box = h("div", { class: "section" }, [
+    h("div", { class: "hero" }, [
+      meta.poster ? h("img", { class: "poster", src: meta.poster, alt: meta.title }) : null,
+      h("div", { class: "hero-text" }, [
+        h("h2", { text: it.title }),
+        h("div", { class: "muted", text: "Sezon ve bölüm işaretleme" }),
+      ]),
+    ]),
+  ]);
+
+  if (!meta.totalSeasons) {
+    box.appendChild(h("p", { class: "muted", text: "Sezon bilgisi bulunamadı (OMDb'de olmayabilir)." }));
+    main.appendChild(box);
+    return;
+  }
+
+  const list = h("div", { class: "list" }, []);
+  for (let s = 1; s <= meta.totalSeasons; s++) {
+    const sk = `${meta.imdbID}|S${s}`;
+    const done = !!state.seasons[sk]?.watched;
+
+    list.appendChild(
+      h("div", { class: "row" }, [
+        h("button", {
+          class: `watch ${done ? "on" : ""}`,
+          type: "button",
+          onclick: () => {
+            const cur = !!state.seasons[sk]?.watched;
+            state.seasons[sk] = { watched: !cur };
+            saveState();
+            render();
+          }
+        }, [done ? "✓" : "—"]),
+        h("div", { class: "row-main" }, [
+          h("div", { class: "row-title", text: `Sezon ${s}` }),
+          h("div", { class: "row-meta", text: "Bölüm listesi için aç" }),
+        ]),
+        h("button", {
+          class: "btn small",
+          type: "button",
+          onclick: () => {
+            route.view = "episodes";
+            route.season = s;
+            render();
+          }
+        }, ["Aç"]),
+      ])
+    );
+  }
+
+  box.appendChild(list);
+  main.appendChild(box);
+}
+
+async function renderEpisodes(main) {
+  const tabData = DATA[route.tab];
+  const items = await loadJsDefault(tabData.collections[route.categoryKey]);
+  const it = items.find(x => keyForItem(x) === route.itemId);
+
+  main.appendChild(topbar("← Sezonlar", () => { route.view = "seasons"; render(); }, `${it?.title || "Dizi"} • ${route.season}. Sezon`));
+
+  if (!it) {
+    main.appendChild(h("p", { class: "muted", text: "Dizi bulunamadı." }));
+    return;
+  }
+
+  const meta = await getOmdbMeta(it, "series");
+  if (!meta.ok || meta.type !== "series" || !meta.imdbID) {
+    main.appendChild(h("p", { class: "muted", text: "Bölüm listesi bulunamadı (OMDb'de yok olabilir)." }));
+    return;
+  }
+
+  const sdata = await getSeasonEpisodes(meta.imdbID, route.season);
+  if (!sdata.ok) {
+    main.appendChild(h("p", { class: "muted", text: "Bölüm listesi bulunamadı (OMDb'de yok olabilir)." }));
+    return;
+  }
+
+  const box = h("div", { class: "section" }, [
+    h("div", { class: "hero" }, [
+      meta.poster ? h("img", { class: "poster", src: meta.poster, alt: meta.title }) : null,
+      h("div", { class: "hero-text" }, [
+        h("h2", { text: it.title }),
+        h("div", { class: "muted", text: `${route.season}. Sezon • Bölümler tek tek işaretlenir` }),
+      ]),
+    ]),
+  ]);
+
+  const list = h("div", { class: "list" }, []);
+  for (const ep of sdata.episodes) {
+    const ek = `${meta.imdbID}|S${route.season}|E${ep.episode}`;
+    const done = !!state.episodes[ek]?.watched;
+
+    list.appendChild(
+      h("div", { class: "row" }, [
+        h("button", {
+          class: `watch ${done ? "on" : ""}`,
+          type: "button",
+          onclick: () => {
+            const cur = !!state.episodes[ek]?.watched;
+            state.episodes[ek] = { watched: !cur };
+            saveState();
+            render();
+          }
+        }, [done ? "✓" : "—"]),
+        h("div", { class: "row-main" }, [
+          h("div", { class: "row-title", text: `${ep.episode}. ${ep.title}` }),
+          h("div", { class: "row-meta", text: (ep.released && ep.released !== "N/A") ? `Yayın: ${ep.released}` : "" }),
+        ]),
+      ])
+    );
+  }
+
+  box.appendChild(list);
+  main.appendChild(box);
+}
+
+async function render() {
+  const root = ensureRoot();
+  root.innerHTML = "";
+
+  root.appendChild(header());
+
+  const main = h("main", { class: "main" }, []);
+  root.appendChild(main);
+
+  try {
+    if (route.view === "home") await renderHome(main);
+    else if (route.view === "list") await renderList(main);
+    else if (route.view === "seasons") await renderSeasons(main);
+    else if (route.view === "episodes") await renderEpisodes(main);
+  } catch (err) {
+    main.appendChild(h("p", { class: "muted", text: `Hata: ${err.message}` }));
+  }
+}
+
+// boot
 render();
