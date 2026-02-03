@@ -1,379 +1,275 @@
 import MCU from "./data/marvel/mcu.collection.js";
 
-const OMDB_API_KEY = "a57784cc";
-const STORAGE_KEY = "nova_koleksiyon_v2";
+const OMDB_KEY = "a57784cc";
+const POSTER_W = 300; // w300
+const STORAGE_KEY = "koleksiyon_takip_v3";
 
-const $ = (id) => document.getElementById(id);
+const elList = document.getElementById("screen-list");
+const elDetail = document.getElementById("screen-detail");
+const tabMarvel = document.getElementById("tab-marvel");
+const tabStarWars = document.getElementById("tab-starwars");
 
-const screens = {
-  home: $("screen-home"),
-  marvel: $("screen-marvel"),
-  list: $("screen-list"),
-  season: $("screen-season"),
+let state = loadState();
+
+tabMarvel.onclick = () => renderMarvel();
+tabStarWars.onclick = () => {
+  tabMarvel.classList.remove("active");
+  tabStarWars.classList.add("active");
+  elDetail.classList.add("hidden");
+  elList.classList.remove("hidden");
+  elList.innerHTML = `
+    <div class="hRow"><h2>Star Wars</h2><div class="small">Önce MCU’yu sağlamlaştırıyoruz 🙂</div></div>
+    <div class="small">Star Wars sekmesini bir sonraki adımda aynı motorla ekleyeceğiz.</div>
+  `;
 };
 
-function showScreen(name){
-  Object.values(screens).forEach(s => s.classList.remove("active"));
-  screens[name].classList.add("active");
-}
+renderMarvel();
 
-function normalizeTitle(t){
-  return (t || "").trim();
-}
+function renderMarvel(){
+  tabStarWars.classList.remove("active");
+  tabMarvel.classList.add("active");
+  elDetail.classList.add("hidden");
+  elList.classList.remove("hidden");
 
-async function loadState(){
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if(!raw) return { watched: {}, epWatched: {} };
-  try { return JSON.parse(raw); } catch { return { watched: {}, epWatched: {} }; }
-}
-async function saveState(state){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
+  elList.innerHTML = `
+    <div class="hRow">
+      <h2>Marvel (MCU)</h2>
+      <div class="small">Poster: OMDb • Dizi bölümleri: OMDb Seasons</div>
+    </div>
+    <div id="mcuList" class="list"></div>
+  `;
 
-function makeId(prefix, title){
-  return prefix + "_" + title.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"");
-}
+  const box = document.getElementById("mcuList");
+  box.innerHTML = "";
 
-/**
- * OMDb helpers
- */
-const omdbCacheByTitle = new Map(); // title -> { imdbID, Type, Poster, totalSeasons }
-const omdbCacheSeason = new Map();  // imdbID|season -> { Episodes: [...] }
+  MCU.forEach((it, idx) => {
+    const key = makeItemKey("mcu", it.query);
 
-async function omdbByTitle(title){
-  const key = normalizeTitle(title);
-  if(omdbCacheByTitle.has(key)) return omdbCacheByTitle.get(key);
+    const watched = !!state.items[key]?.watched;
+    const badge = watched ? `<span class="badge ok">İzlendi</span>` : `<span class="badge">İzlenmedi</span>`;
 
-  const url = `https://www.omdbapi.com/?apikey=${OMDB_API_KEY}&t=${encodeURIComponent(key)}`;
-  const res = await fetch(url);
-  const json = await res.json();
+    const row = document.createElement("div");
+    row.className = "item";
+    row.innerHTML = `
+      <div class="poster" id="p_${idx}"></div>
+      <div>
+        <div class="title">${escapeHtml(it.titleTR)}</div>
+        <div class="meta">${kindLabel(it.kind)}</div>
+      </div>
+      <div class="actions">
+        ${badge}
+        <button class="btn" data-tog="${idx}">İzlendi</button>
+        ${it.kind === "series" ? `<button class="btn primary" data-open="${idx}">Sezonlar</button>` : ``}
+      </div>
+    `;
 
-  // Bazı One-Shot / özel içerikler OMDb'de bulunmayabilir.
-  const data = (json && json.Response === "True") ? json : null;
+    box.appendChild(row);
 
-  if(data){
-    const out = {
-      imdbID: data.imdbID,
-      type: data.Type, // movie / series
-      poster: data.Poster,
-      totalSeasons: data.totalSeasons ? Number(data.totalSeasons) : null,
-      year: data.Year || null
+    // poster async
+    ensurePoster(`p_${idx}`, it.query, it.kind);
+
+    row.querySelector(`[data-tog="${idx}"]`).onclick = () => {
+      toggleWatched(key);
+      renderMarvel();
     };
-    omdbCacheByTitle.set(key, out);
-    return out;
-  }
 
-  omdbCacheByTitle.set(key, null);
-  return null;
-}
-
-function omdbPosterUrl(imdbID){
-  // IMDb hotlink değil, OMDb'nin image endpointi:
-  return `https://img.omdbapi.com/?apikey=${OMDB_API_KEY}&i=${encodeURIComponent(imdbID)}&h=600`;
-}
-
-async function omdbSeasonEpisodes(imdbID, seasonNumber){
-  const cacheKey = `${imdbID}|${seasonNumber}`;
-  if(omdbCacheSeason.has(cacheKey)) return omdbCacheSeason.get(cacheKey);
-
-  const url = `https://www.omdbapi.com/?apikey=${OMDB_API_KEY}&i=${encodeURIComponent(imdbID)}&Season=${seasonNumber}`;
-  const res = await fetch(url);
-  const json = await res.json();
-  if(json && json.Response === "True" && Array.isArray(json.Episodes)){
-    omdbCacheSeason.set(cacheKey, json.Episodes);
-    return json.Episodes;
-  }
-  omdbCacheSeason.set(cacheKey, []);
-  return [];
-}
-
-/**
- * Rendering
- */
-let currentList = [];
-let currentListTitle = "MCU";
-let prevScreen = "home";
-
-function computeProgress(state, items){
-  // Movie/short/special: 1 birim
-  // Season: episode sayısı kadar (yoksa 1 kabul)
-  let done = 0;
-  let total = 0;
-
-  for(const it of items){
-    if(it.kind === "season"){
-      // epWatched: key = itemId|epIndex
-      const seasonKey = it.id;
-      const eps = it._episodesCount || 0;
-      const seasonTotal = eps > 0 ? eps : 1;
-      total += seasonTotal;
-
-      if(eps > 0){
-        for(let i=0;i<eps;i++){
-          const k = `${seasonKey}|${i}`;
-          if(state.epWatched[k]) done += 1;
-        }
-      } else {
-        if(state.watched[seasonKey]) done += 1;
-      }
-    } else {
-      total += 1;
-      if(state.watched[it.id]) done += 1;
+    const openBtn = row.querySelector(`[data-open="${idx}"]`);
+    if(openBtn){
+      openBtn.onclick = () => openSeries(it, key);
     }
-  }
-
-  const pct = total ? Math.round((done/total)*100) : 0;
-  return { done, total, pct };
+  });
 }
 
-async function ensurePostersAndSeasonCounts(items){
-  // Liste kartları için poster ve sezon bölüm sayısı (dizi sezonu için) hazırlığı
-  for(const it of items){
-    if(it.kind === "season"){
-      const info = await omdbByTitle(it.seriesTitle);
-      if(info?.imdbID){
-        it.imdbID = info.imdbID;
-        it.posterUrl = omdbPosterUrl(info.imdbID);
-      } else {
-        it.posterUrl = ""; // fallback
-      }
+async function openSeries(item, itemKey){
+  elList.classList.add("hidden");
+  elDetail.classList.remove("hidden");
 
-      // Sezon episode sayısını kabaca önden çekelim (liste progress doğru olsun)
-      if(info?.imdbID){
-        const eps = await omdbSeasonEpisodes(info.imdbID, it.seasonNumber);
-        it._episodesCount = eps.length;
-      } else {
-        it._episodesCount = 0;
-      }
-    } else {
-      const info = await omdbByTitle(it.title);
-      if(info?.imdbID){
-        it.imdbID = info.imdbID;
-        it.posterUrl = omdbPosterUrl(info.imdbID);
-      } else {
-        it.posterUrl = "";
-      }
-    }
+  elDetail.innerHTML = `
+    <div class="backRow">
+      <button class="btn" id="backBtn">← Liste</button>
+      <div>
+        <div class="title">${escapeHtml(item.titleTR)}</div>
+        <div class="small">Sezon ve bölüm işaretleme</div>
+      </div>
+    </div>
+    <div id="seriesMeta" class="small">Yükleniyor…</div>
+    <div id="seasonGrid" class="seasonGrid"></div>
+  `;
+  document.getElementById("backBtn").onclick = () => renderMarvel();
+
+  // 1) imdbID bul (doğru eşleşme için query İngilizce)
+  const base = await omdb({ t: item.query, type: "series" });
+  if(!base || base.Response === "False" || !base.imdbID){
+    document.getElementById("seriesMeta").textContent =
+      "Dizi OMDb’de bulunamadı. (Query eşleşmedi.)";
+    return;
+  }
+
+  const imdbID = base.imdbID;
+  const totalSeasons = parseInt(base.totalSeasons || "0", 10);
+
+  document.getElementById("seriesMeta").textContent =
+    `OMDb: ${base.Title} • Toplam sezon: ${totalSeasons || "?"}`;
+
+  // 2) sezon kartları
+  const grid = document.getElementById("seasonGrid");
+  grid.innerHTML = "";
+
+  const seasons = totalSeasons || 1; // en az 1 dener
+  for(let s=1; s<=seasons; s++){
+    const card = document.createElement("div");
+    card.className = "seasonCard";
+    card.innerHTML = `
+      <div class="seasonHead">
+        <h3>${escapeHtml(item.titleTR)} • ${s}. Sezon</h3>
+        <button class="btn" data-load="${s}">Bölümleri Getir</button>
+      </div>
+      <div id="eps_${s}" class="small">Henüz yüklenmedi.</div>
+    `;
+    grid.appendChild(card);
+
+    card.querySelector(`[data-load="${s}"]`).onclick = async () => {
+      await loadSeasonEpisodes(imdbID, itemKey, item.titleTR, s);
+    };
+  }
+}
+
+async function loadSeasonEpisodes(imdbID, itemKey, titleTR, seasonNum){
+  const target = document.getElementById(`eps_${seasonNum}`);
+  target.innerHTML = "Yükleniyor…";
+
+  const season = await omdb({ i: imdbID, Season: String(seasonNum) });
+  if(!season || season.Response === "False" || !Array.isArray(season.Episodes)){
+    target.innerHTML = "Bölüm listesi bulunamadı (OMDb'de yok olabilir).";
+    return;
+  }
+
+  // storage alanı
+  state.episodes[itemKey] ??= {};
+  state.episodes[itemKey][seasonNum] ??= {}; // episodeNo -> bool
+  saveState();
+
+  const wrap = document.createElement("div");
+  wrap.className = "epList";
+
+  season.Episodes.forEach(ep => {
+    const epNo = parseInt(ep.Episode, 10);
+    const checked = !!state.episodes[itemKey][seasonNum][epNo];
+
+    const row = document.createElement("div");
+    row.className = "ep";
+    row.innerHTML = `
+      <label>
+        <input type="checkbox" ${checked ? "checked":""} />
+        <span class="epTitle">${seasonNum}.${epNo} • ${escapeHtml(ep.Title || "Bölüm")}</span>
+      </label>
+      <span class="small">${ep.Released && ep.Released !== "N/A" ? escapeHtml(ep.Released) : ""}</span>
+    `;
+
+    row.querySelector("input").onchange = (e) => {
+      state.episodes[itemKey][seasonNum][epNo] = e.target.checked;
+      saveState();
+    };
+
+    wrap.appendChild(row);
+  });
+
+  target.innerHTML = "";
+  target.appendChild(wrap);
+}
+
+function toggleWatched(itemKey){
+  state.items[itemKey] ??= {};
+  state.items[itemKey].watched = !state.items[itemKey].watched;
+  saveState();
+}
+
+async function ensurePoster(containerId, queryTitle, kind){
+  const box = document.getElementById(containerId);
+  if(!box) return;
+
+  // cache
+  state.posterCache ??= {};
+  const cacheKey = `${kind}:${queryTitle}`;
+  if(state.posterCache[cacheKey]){
+    box.innerHTML = `<img alt="" src="${state.posterCache[cacheKey]}">`;
+    return;
+  }
+
+  const type = kind === "series" ? "series" : "movie";
+  const data = await omdb({ t: queryTitle, type });
+  let poster = data?.Poster && data.Poster !== "N/A" ? data.Poster : "";
+
+  // OMDb posterı bazen zaten full URL; w300 istiyorsun:
+  poster = normalizePosterToW300(poster);
+
+  if(poster){
+    state.posterCache[cacheKey] = poster;
+    saveState();
+    box.innerHTML = `<img alt="" src="${poster}">`;
+  } else {
+    box.innerHTML = `<span class="small">—</span>`;
+  }
+}
+
+function normalizePosterToW300(url){
+  if(!url) return "";
+  // OMDb bazen: https://m.media-amazon.com/images/M/....jpg
+  // w300 istiyorsak:
+  return url.replace(/_V1_.*?\.jpg$/i, "_V1_UX300_.jpg");
+}
+
+async function omdb(params){
+  const u = new URL("https://www.omdbapi.com/");
+  u.searchParams.set("apikey", OMDB_KEY);
+  Object.entries(params).forEach(([k,v]) => u.searchParams.set(k, v));
+
+  try{
+    const res = await fetch(u.toString());
+    return await res.json();
+  }catch{
+    return null;
   }
 }
 
 function kindLabel(kind){
   switch(kind){
     case "movie": return "Film";
-    case "short": return "Kısa";
-    case "special": return "Özel";
-    case "oneshot": return "One-Shot";
-    case "season": return "Sezon";
-    default: return kind;
+    case "series": return "Dizi";
+    case "short": return "Tek Atış";
+    case "special": return "Özel Sunum";
+    default: return kind || "";
   }
 }
 
-async function renderList(){
-  const state = await loadState();
-  const listEl = $("list");
-  listEl.innerHTML = "";
-
-  await ensurePostersAndSeasonCounts(currentList);
-
-  const prog = computeProgress(state, currentList);
-  $("progressFill").style.width = `${prog.pct}%`;
-  $("progressText").textContent = `${prog.pct}%`;
-  $("list-title").textContent = currentListTitle;
-
-  for(const it of currentList){
-    const card = document.createElement("div");
-    card.className = "card";
-
-    const img = document.createElement("img");
-    img.className = "poster";
-    img.alt = it.title;
-    img.src = it.posterUrl || "";
-    img.onerror = () => { img.style.display = "none"; };
-
-    const main = document.createElement("div");
-    main.className = "cardMain";
-
-    const title = document.createElement("div");
-    title.className = "cardTitle";
-    title.textContent = it.kind === "season"
-      ? `${it.seriesTitle} (Sezon ${it.seasonNumber})`
-      : it.title;
-
-    const meta = document.createElement("div");
-    meta.className = "cardMeta";
-    meta.textContent = `${kindLabel(it.kind)}`;
-
-    main.appendChild(title);
-    main.appendChild(meta);
-
-    const actions = document.createElement("div");
-    actions.className = "actions";
-
-    // izledim/izlemedim
-    const watched = !!state.watched[it.id];
-
-    if(it.kind === "season"){
-      // Sezonlarda izleme durumu episode üzerinden, ama yine de "hepsini izledim" pratik butonu olsun
-      const badge = document.createElement("div");
-      badge.className = "badge";
-
-      const eps = it._episodesCount || 0;
-      if(eps > 0){
-        let done = 0;
-        for(let i=0;i<eps;i++){
-          if(state.epWatched[`${it.id}|${i}`]) done++;
-        }
-        badge.textContent = `${done}/${eps} bölüm`;
-      } else {
-        badge.textContent = watched ? "Tamamlandı" : "Başlamadın";
-      }
-      actions.appendChild(badge);
-
-      const open = document.createElement("button");
-      open.className = "btn primary";
-      open.textContent = "Aç";
-      open.onclick = async () => openSeason(it);
-      actions.appendChild(open);
-
-      const markAll = document.createElement("button");
-      markAll.className = watched ? "btn" : "btn ok";
-      markAll.textContent = watched ? "Sıfırla" : "Hepsi izlendi";
-      markAll.onclick = async () => {
-        const st = await loadState();
-        const eps2 = it._episodesCount || 0;
-        if(eps2 > 0){
-          if(watched){
-            for(let i=0;i<eps2;i++) delete st.epWatched[`${it.id}|${i}`];
-            st.watched[it.id] = false;
-          } else {
-            for(let i=0;i<eps2;i++) st.epWatched[`${it.id}|${i}`] = true;
-            st.watched[it.id] = true;
-          }
-        } else {
-          st.watched[it.id] = !watched;
-        }
-        await saveState(st);
-        await renderList();
-      };
-      actions.appendChild(markAll);
-
-    } else {
-      const badge = document.createElement("div");
-      badge.className = "badge";
-      badge.textContent = watched ? "İzlendi ✅" : "İzlenmedi";
-      actions.appendChild(badge);
-
-      const toggle = document.createElement("button");
-      toggle.className = watched ? "btn" : "btn ok";
-      toggle.textContent = watched ? "Geri al" : "İzledim";
-      toggle.onclick = async () => {
-        const st = await loadState();
-        st.watched[it.id] = !watched;
-        await saveState(st);
-        await renderList();
-      };
-      actions.appendChild(toggle);
-
-      const search = document.createElement("button");
-      search.className = "btn";
-      search.textContent = "İzle";
-      search.onclick = () => {
-        const q = encodeURIComponent(it.title);
-        window.open(`https://www.google.com/search?q=${q}+izle`, "_blank");
-      };
-      actions.appendChild(search);
-    }
-
-    card.appendChild(img);
-    card.appendChild(main);
-    card.appendChild(actions);
-    listEl.appendChild(card);
-  }
+function makeItemKey(lib, query){
+  return `${lib}::${query}`.toLowerCase();
 }
 
-async function openSeason(item){
-  const st = await loadState();
-
-  $("season-title").textContent = `${item.seriesTitle} • Sezon ${item.seasonNumber}`;
-  $("season-meta").textContent = `Bölümler OMDb’den çekiliyor…`;
-  $("episodes").innerHTML = "";
-
-  showScreen("season");
-
-  const eps = (item.imdbID)
-    ? await omdbSeasonEpisodes(item.imdbID, item.seasonNumber)
-    : [];
-
-  const total = eps.length;
-
-  $("season-meta").textContent = total
-    ? `${total} bölüm`
-    : `Bölüm listesi bulunamadı (OMDb’de yok olabilir).`;
-
-  // episode list
-  for(let i=0;i<eps.length;i++){
-    const e = eps[i]; // { Title, Released, Episode, imdbRating, imdbID }
-    const key = `${item.id}|${i}`;
-    const watched = !!st.epWatched[key];
-
-    const row = document.createElement("div");
-    row.className = "ep";
-
-    const main = document.createElement("div");
-    main.className = "epMain";
-
-    const t = document.createElement("div");
-    t.className = "epTitle";
-    t.textContent = `${e.Episode}. ${e.Title}`;
-
-    const sub = document.createElement("div");
-    sub.className = "epSub";
-    sub.textContent = watched ? "İzlendi ✅" : "İzlenmedi";
-
-    main.appendChild(t);
-    main.appendChild(sub);
-
-    const btn = document.createElement("button");
-    btn.className = watched ? "btn" : "btn ok";
-    btn.textContent = watched ? "Geri al" : "İzledim";
-    btn.onclick = async () => {
-      const st2 = await loadState();
-      st2.epWatched[key] = !watched;
-
-      // Sezon tamamlandı mı?
-      const epsNow = await omdbSeasonEpisodes(item.imdbID, item.seasonNumber);
-      let all = true;
-      for(let j=0;j<epsNow.length;j++){
-        if(!st2.epWatched[`${item.id}|${j}`]) { all = false; break; }
-      }
-      st2.watched[item.id] = all;
-
-      await saveState(st2);
-      await openSeason(item); // aynı ekranı yeniden çiz (kapatma yok)
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return { items:{}, episodes:{}, posterCache:{} };
+    const parsed = JSON.parse(raw);
+    return {
+      items: parsed.items || {},
+      episodes: parsed.episodes || {},
+      posterCache: parsed.posterCache || {}
     };
-
-    row.appendChild(main);
-    row.appendChild(btn);
-    $("episodes").appendChild(row);
+  }catch{
+    return { items:{}, episodes:{}, posterCache:{} };
   }
 }
 
-/**
- * Navigation
- */
-$("btn-marvel").onclick = () => { prevScreen = "home"; showScreen("marvel"); };
-$("back-home").onclick = () => showScreen("home");
+function saveState(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
 
-$("btn-mcu").onclick = async () => {
-  prevScreen = "marvel";
-  currentListTitle = "MCU";
-  currentList = MCU;
-  showScreen("list");
-  await renderList();
-};
-
-$("back-prev").onclick = () => showScreen(prevScreen);
-$("back-list").onclick = () => showScreen("list");
-
-// initial
-showScreen("home");
+function escapeHtml(s){
+  return String(s ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
