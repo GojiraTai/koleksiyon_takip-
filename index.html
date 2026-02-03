@@ -1,32 +1,24 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="tr">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Koleksiyon Takip</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Koleksiyon</title>
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <h1>Koleksiyon Takip</h1>
+  <header class="header">
+    <div class="header__brand">
+      <div class="header__title">Koleksiyon</div>
+      <div class="header__sub">Marvel & Star Wars İzleme Takibi</div>
+    </div>
+    <div class="crumbs" id="crumbs"></div>
+  </header>
 
-  <input id="itemInput" type="text" placeholder="Ürün adı yaz" />
-  <button onclick="ekle()">Ekle</button>
+  <main class="wrap">
+    <div id="app"></div>
+  </main>
 
-  <ul id="liste"></ul>
-
-  <script>
-    function ekle() {
-      const input = document.getElementById("itemInput");
-      const liste = document.getElementById("liste");
-      const deger = input.value.trim();
-      if (!deger) return;
-
-      const li = document.createElement("li");
-      li.textContent = deger;
-      liste.appendChild(li);
-
-      input.value = "";
-      input.focus();
-    }
-  </script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>
