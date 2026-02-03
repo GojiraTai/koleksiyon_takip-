@@ -1,65 +1,163 @@
-// app.js (ESM - Module)
+/* app.js - Koleksiyon Takip (vanilla JS)
+   - ES module dosyalarını (import/export default) fetch + eval ile çalıştırmak için mini loader içerir
+*/
 
-// -----------------------------
-// Ayarlar
-// -----------------------------
+const $ = (sel, root = document) => root.querySelector(sel);
+
+const screenList = $("#screen-list");
+const screenDetail = $("#screen-detail");
+
+const btnTabMarvel = $("#tab-marvel");
+const btnTabStarwars = $("#tab-starwars");
+
 const STORAGE_KEY = "koleksiyon_takip_v1";
 
-// Bu projede data dosyaları default export ile geliyor.
-// Örn: export default [ ... ]
-// Bu yüzden dynamic import ile okuyacağız.
-const PATHS = {
-  marvelIndex: "./data/marvel/marvel.index.js",
-  starwarsIndex: "./data/starwars/starwars.index.js",
-};
-
-// -----------------------------
-// DOM
-// -----------------------------
-const elTabMarvel = document.getElementById("tab-marvel");
-const elTabStarwars = document.getElementById("tab-starwars");
-
-const elScreenList = document.getElementById("screen-list");
-const elScreenDetail = document.getElementById("screen-detail");
-
-// -----------------------------
-// State
-// -----------------------------
 const state = {
-  activeTab: "marvel", // "marvel" | "starwars"
-  homeIndex: null,     // index array
-  list: null,          // active category list (items)
-  breadcrumb: [],      // navigation
-  progress: loadProgress(),
+  tab: "marvel",          // "marvel" | "starwars"
+  view: "home",           // "home" | "category" | "detail"
+  categoryKey: null,
+  itemKey: null,
 };
 
-// -----------------------------
-// Storage helpers
-// -----------------------------
-function loadProgress() {
+const cache = new Map(); // path -> exported default
+
+/* -----------------------------
+   Mini ESM Loader (import/export default)
+   ----------------------------- */
+
+// Basit path birleştirme
+function joinPath(base, rel) {
+  if (rel.startsWith("http")) return rel;
+  if (rel.startsWith("/")) return rel;
+
+  const baseParts = base.split("/").slice(0, -1); // dosya adını at
+  const relParts = rel.split("/");
+
+  for (const part of relParts) {
+    if (part === "." || part === "") continue;
+    if (part === "..") baseParts.pop();
+    else baseParts.push(part);
+  }
+  return baseParts.join("/");
+}
+
+// "import xxx from './a.js';" satırlarını yakala
+function parseImports(code) {
+  // sadece default import destekliyoruz: import name from "./file.js";
+  const re = /^\s*import\s+([A-Za-z_$][\w$]*)\s+from\s+["'](.+?)["']\s*;\s*$/gm;
+  const imports = [];
+  let m;
+  while ((m = re.exec(code)) !== null) {
+    imports.push({ name: m[1], from: m[2], full: m[0] });
+  }
+  return imports;
+}
+
+function stripImports(code) {
+  // import satırlarını tamamen sil
+  return code.replace(/^\s*import\s+[A-Za-z_$][\w$]*\s+from\s+["'](.+?)["']\s*;\s*$/gm, "");
+}
+
+function transformExportDefaultToReturn(code) {
+  // export default ....;  -> return ....;
+  // Bu projede default export tek ve en altta varsayımıyla çalışır.
+  return code.replace(/\bexport\s+default\b/g, "return");
+}
+
+async function loadExportDefaultJS(path) {
+  if (cache.has(path)) return cache.get(path);
+
+  const res = await fetch(path, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Dosya yüklenemedi: ${path} (${res.status})`);
+  let code = await res.text();
+
+  // import’ları çöz
+  const imports = parseImports(code);
+  const values = {};
+
+  for (const imp of imports) {
+    const childPath = joinPath(path, imp.from);
+    values[imp.name] = await loadExportDefaultJS(childPath);
+  }
+
+  // import satırlarını sil, export default'u return'e çevir
+  code = stripImports(code);
+  code = transformExportDefaultToReturn(code);
+
+  // Çalıştırılacak fonksiyon gövdesi:
+  // const mcu = __deps.mcu; ...
+  // return {...};
+  const depLines = Object.keys(values)
+    .map((k) => `const ${k} = __deps[${JSON.stringify(k)}];`)
+    .join("\n");
+
+  const wrapped = `${depLines}\n${code}`;
+
+  let exported;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
+    // new Function ile çalıştır
+    exported = new Function("__deps", wrapped)(values);
+  } catch (e) {
+    // Hata olursa daha anlaşılır göster
+    console.error("loadExportDefaultJS eval error:", path, e);
+    throw new Error(`JS parse/çalıştırma hatası: ${path}\n${e.message}`);
+  }
+
+  cache.set(path, exported);
+  return exported;
+}
+
+/* -----------------------------
+   Storage (izlendi işaretleri)
+   ----------------------------- */
+
+function loadStore() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
   } catch {
     return {};
   }
 }
-
-function saveProgress() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.progress));
+function saveStore(data) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+function makeItemId(tab, categoryKey, idx) {
+  return `${tab}::${categoryKey}::${idx}`;
 }
 
-function ensureProgressNode(key) {
-  if (!state.progress[key]) state.progress[key] = { done: {}, episodes: {} };
-  if (!state.progress[key].done) state.progress[key].done = {};
-  if (!state.progress[key].episodes) state.progress[key].episodes = {};
-  return state.progress[key];
+/* -----------------------------
+   UI helpers
+   ----------------------------- */
+
+function setActiveTab(tab) {
+  state.tab = tab;
+  btnTabMarvel.classList.toggle("active", tab === "marvel");
+  btnTabStarwars.classList.toggle("active", tab === "starwars");
 }
 
-// -----------------------------
-// Util
-// -----------------------------
-function esc(s) {
+function showScreen(which) {
+  // which: "list" | "detail"
+  if (which === "list") {
+    screenList.classList.remove("hidden");
+    screenDetail.classList.add("hidden");
+  } else {
+    screenList.classList.add("hidden");
+    screenDetail.classList.remove("hidden");
+  }
+}
+
+function renderError(targetEl, title, err) {
+  targetEl.innerHTML = `
+    <div class="card" style="margin-top:16px;">
+      <h2 style="margin:0 0 8px 0;">${escapeHtml(title)}</h2>
+      <div style="opacity:.9; white-space:pre-wrap; font-size:14px;">
+        ${escapeHtml(String(err?.message || err))}
+      </div>
+    </div>
+  `;
+}
+
+function escapeHtml(s) {
   return String(s)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -68,388 +166,254 @@ function esc(s) {
     .replaceAll("'", "&#039;");
 }
 
-function setActiveTabUI(tab) {
-  if (tab === "marvel") {
-    elTabMarvel.classList.add("active");
-    elTabStarwars.classList.remove("active");
-  } else {
-    elTabStarwars.classList.add("active");
-    elTabMarvel.classList.remove("active");
+/* -----------------------------
+   Data loading
+   ----------------------------- */
+
+async function loadTabIndex(tab) {
+  // tab: "marvel" | "starwars"
+  // dosyalar: /data/marvel/marvel.index.js gibi
+  const path = `/data/${tab}/${tab}.index.js`;
+  return await loadExportDefaultJS(path);
+}
+
+async function getCategoryItems(tabIndex, categoryKey, tab) {
+  // tabIndex.libs[categoryKey] array ya da path olabilir
+  const lib = tabIndex.libs?.[categoryKey];
+  if (!lib) return [];
+
+  if (Array.isArray(lib)) return lib;
+
+  // string path gelirse
+  if (typeof lib === "string") {
+    const path = lib.startsWith("/") ? lib : `/data/${tab}/${lib}`;
+    const data = await loadExportDefaultJS(path);
+    return Array.isArray(data) ? data : [];
   }
+
+  return [];
 }
 
-function showScreen(which) {
-  if (which === "list") {
-    elScreenList.classList.remove("hidden");
-    elScreenDetail.classList.add("hidden");
-  } else {
-    elScreenDetail.classList.remove("hidden");
-    elScreenList.classList.add("hidden");
-  }
-}
+/* -----------------------------
+   Render: HOME / CATEGORY / DETAIL
+   ----------------------------- */
 
-function normalizeItem(raw, i) {
-  // raw: { title, type, ... } bekliyoruz
-  // id yoksa deterministik üretelim:
-  const id = raw.id ?? `${slug(raw.title)}_${i}`;
-  return { ...raw, id };
-}
-
-function slug(s) {
-  return String(s || "")
-    .toLowerCase()
-    .replaceAll("ı", "i")
-    .replaceAll("ğ", "g")
-    .replaceAll("ü", "u")
-    .replaceAll("ş", "s")
-    .replaceAll("ö", "o")
-    .replaceAll("ç", "c")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
-}
-
-function percent(doneCount, total) {
-  if (!total) return 0;
-  return Math.round((doneCount / total) * 100);
-}
-
-// -----------------------------
-// Module loader (kritik düzeltme)
-// -----------------------------
-async function importDefault(path) {
-  // Cache bust yok: GitHub Pages / Codespace sabit kalsın diye.
-  // (Gerekirse ?v=... ekleyebilirsin)
-  const mod = await import(path);
-  return mod.default;
-}
-
-// -----------------------------
-// Data loading
-// -----------------------------
-async function loadHomeIndex(tab) {
-  if (tab === "marvel") return await importDefault(PATHS.marvelIndex);
-  return await importDefault(PATHS.starwarsIndex);
-}
-
-async function loadCategoryItems(category) {
-  // category örn:
-  // { id:"mcu", title:"MCU", file:"./data/marvel/mcu.collection.js" }
-  if (!category?.file) throw new Error("Kategori dosyası (file) yok.");
-  const arr = await importDefault(category.file);
-  return Array.isArray(arr) ? arr : [];
-}
-
-// -----------------------------
-// Render: HOME
-// -----------------------------
-function renderHome(indexArr) {
+async function renderHome(tab) {
   showScreen("list");
 
-  const tabTitle = state.activeTab === "marvel" ? "Marvel" : "Star Wars";
-
-  // HOME total/progress: tüm kategorilerdeki işaretlenenleri saymak için
-  // (Performans: burada sadece mevcut progress üzerinden sayıyoruz. Data dosyalarını tek tek yüklemiyoruz.)
-  const summary = buildHomeSummary(indexArr);
-
-  elScreenList.innerHTML = `
-    <header class="header">
-      <h1>Koleksiyon</h1>
-      <p>${tabTitle} İzleme Takibi</p>
-      <div class="progressbar">
-        <div class="progressbar__row">
-          <div class="progressbar__label">Genel ilerleme</div>
-          <div class="progressbar__value">%${summary.percent}</div>
-        </div>
-        <div class="progressbar__track">
-          <div class="progressbar__fill" style="width:${summary.percent}%"></div>
-        </div>
-        <div class="progressbar__meta">${summary.done} işaretli</div>
+  screenList.innerHTML = `
+    <div class="card">
+      <h1 style="margin:0 0 6px 0;">Koleksiyon</h1>
+      <div style="opacity:.8;">${tab === "marvel" ? "Marvel" : "Star Wars"} İzleme Takibi</div>
+      <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn" id="btn-home-tab">${tab === "marvel" ? "Marvel" : "Star Wars"} Kategorileri</button>
       </div>
-    </header>
-
-    <div class="list">
-      ${indexArr
-        .map((c) => renderCategoryCard(c))
-        .join("")}
+      <div id="home-stats" style="margin-top:14px; opacity:.9;"></div>
     </div>
+
+    <div id="home-categories" style="margin-top:14px;"></div>
   `;
 
-  // click handlers
-  elScreenList.querySelectorAll("[data-cat]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const catId = btn.getAttribute("data-cat");
-      const cat = indexArr.find((x) => String(x.id) === String(catId));
-      if (!cat) return;
-      await openCategory(cat);
-    });
-  });
-}
+  try {
+    const idx = await loadTabIndex(tab);
+    const store = loadStore();
 
-function buildHomeSummary(indexArr) {
-  // Tüm kategoriler için toplam done sayısını progress objesinden sayıyoruz.
-  // Total'ı gerçek data yüklemeden bilemeyiz; burada "işaretli adet" ve
-  // "yüzde"yi basit tutuyoruz: yüzde = işaretli / (işaretli + işaretsiz bilinmiyor) olmaz.
-  // Bu yüzden: yüzdeyi kategori toplamları üzerinden hesaplamak istersen, her kategori dosyasını
-  // yükleyip saymak gerekir. Aşağıdaki "light" çözüm: yüzdeyi kategori başına ortalama gibi verir.
-  // İstersen sonra "gerçek yüzde"yi de yaparız.
+    // toplam / izlenen hesapla
+    let total = 0;
+    let watched = 0;
 
-  let done = 0;
-  for (const cat of indexArr) {
-    const key = storageKeyFor(cat);
-    const node = state.progress[key];
-    if (node?.done) done += Object.keys(node.done).filter((k) => node.done[k]).length;
-  }
-  // Light yüzde: sadece “işaretli adet”i göstereceğiz, yüzdeyi de 0 yerine daha mantıklı diye
-  // 100'e sabitlemiyoruz. Burada 0-100 arası bir şey isteniyor; basitçe done üzerinden:
-  const p = done === 0 ? 0 : Math.min(99, 10 + Math.floor(Math.log10(done + 1) * 25));
-  return { done, percent: p };
-}
+    for (const c of idx.categories || []) {
+      const items = await getCategoryItems(idx, c.key, tab);
+      total += items.length;
+      items.forEach((it, i) => {
+        const id = makeItemId(tab, c.key, i);
+        if (store[id]) watched += 1;
+      });
+    }
 
-function renderCategoryCard(cat) {
-  const key = storageKeyFor(cat);
-  const node = state.progress[key];
-  const done = node?.done ? Object.keys(node.done).filter((k) => node.done[k]).length : 0;
+    const pct = total ? Math.round((watched / total) * 100) : 0;
+    $("#home-stats").innerHTML = `
+      <div style="margin-top:4px;">Genel ilerleme</div>
+      <div style="font-size:20px; font-weight:700;">%${pct}</div>
+      <div style="opacity:.8;">${watched} işaretli / ${total} toplam</div>
+    `;
 
-  return `
-    <button class="card" data-cat="${esc(cat.id)}">
-      <div class="card__title">${esc(cat.title)}</div>
-      <div class="card__meta">${done} işaretli</div>
-    </button>
-  `;
-}
+    const catWrap = $("#home-categories");
+    catWrap.innerHTML = (idx.categories || [])
+      .map((c) => {
+        return `
+          <button class="card" data-cat="${escapeHtml(c.key)}" style="text-align:left; width:100%; cursor:pointer;">
+            <div style="font-size:18px; font-weight:700;">${escapeHtml(c.title)}</div>
+            <div style="opacity:.75; margin-top:4px;">Listeyi aç</div>
+          </button>
+        `;
+      })
+      .join("");
 
-function storageKeyFor(cat) {
-  // tab + category id benzersiz olsun
-  return `${state.activeTab}:${cat.id}`;
-}
-
-// -----------------------------
-// Render: CATEGORY LIST
-// -----------------------------
-function renderCategoryList(cat, items) {
-  showScreen("list");
-
-  const key = storageKeyFor(cat);
-  const node = ensureProgressNode(key);
-
-  // gerçek yüzde: kategori items üzerinden net hesap
-  const total = items.length;
-  const doneCount = items.filter((it) => node.done[it.id]).length;
-  const p = percent(doneCount, total);
-
-  elScreenList.innerHTML = `
-    <header class="header">
-      <button class="back" id="btn-back-home">← Liste</button>
-      <h2>${esc(cat.title)}</h2>
-
-      <div class="progressbar">
-        <div class="progressbar__row">
-          <div class="progressbar__label">İlerleme</div>
-          <div class="progressbar__value">%${p}</div>
-        </div>
-        <div class="progressbar__track">
-          <div class="progressbar__fill" style="width:${p}%"></div>
-        </div>
-        <div class="progressbar__meta">${doneCount}/${total}</div>
-      </div>
-    </header>
-
-    <div class="list">
-      ${items.map((it) => renderItemRow(cat, it, node)).join("")}
-    </div>
-  `;
-
-  document.getElementById("btn-back-home").addEventListener("click", () => {
-    renderHome(state.homeIndex);
-  });
-
-  // done toggle
-  elScreenList.querySelectorAll("[data-item]").forEach((row) => {
-    row.addEventListener("click", (e) => {
-      // detail butonuna tıklayınca checkbox tetikleme karışmasın
-      const target = e.target;
-      if (target.closest("[data-open-detail]")) return;
-
-      const itemId = row.getAttribute("data-item");
-      node.done[itemId] = !node.done[itemId];
-      saveProgress();
-      // yeniden çiz
-      renderCategoryList(cat, items);
-    });
-  });
-
-  // detail open
-  elScreenList.querySelectorAll("[data-open-detail]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const itemId = btn.getAttribute("data-open-detail");
-      const item = items.find((x) => String(x.id) === String(itemId));
-      if (!item) return;
-      openDetail(cat, item);
-    });
-  });
-}
-
-function renderItemRow(cat, item, node) {
-  const isDone = !!node.done[item.id];
-  const typeLabel = item.type ? item.type : "";
-
-  return `
-    <div class="row ${isDone ? "row--done" : ""}" data-item="${esc(item.id)}">
-      <div class="row__check">${isDone ? "✓" : "—"}</div>
-      <div class="row__main">
-        <div class="row__title">${esc(item.title)}</div>
-        <div class="row__meta">${esc(typeLabel)}</div>
-      </div>
-      <button class="row__btn" data-open-detail="${esc(item.id)}">İzle</button>
-    </div>
-  `;
-}
-
-// -----------------------------
-// Render: DETAIL (Sezon/Bölüm)
-// -----------------------------
-function renderDetail(cat, item) {
-  showScreen("detail");
-
-  const key = storageKeyFor(cat);
-  const node = ensureProgressNode(key);
-
-  // Episodes tracking: item.seasons bekliyoruz:
-  // seasons: [{ season:1, episodes:["Ep 1","Ep 2"] }]
-  const seasons = Array.isArray(item.seasons) ? item.seasons : null;
-
-  elScreenDetail.innerHTML = `
-    <header class="header">
-      <button class="back" id="btn-back-list">← Liste</button>
-      <h2>${esc(item.title)}</h2>
-      <p>${esc(item.type || "")}</p>
-    </header>
-
-    <section class="detail">
-      ${
-        seasons
-          ? renderSeasons(cat, item, seasons, node)
-          : `<div class="empty">Bölüm listesi bulunamadı. (Bu içerik için data dosyasında <code>seasons</code> yok.)</div>`
-      }
-    </section>
-  `;
-
-  document.getElementById("btn-back-list").addEventListener("click", () => {
-    renderCategoryList(cat, state.list);
-  });
-
-  if (seasons) {
-    elScreenDetail.querySelectorAll("[data-ep]").forEach((cb) => {
-      cb.addEventListener("change", () => {
-        const k = cb.getAttribute("data-ep"); // season|epIndex
-        if (!node.episodes[item.id]) node.episodes[item.id] = {};
-        node.episodes[item.id][k] = cb.checked;
-        saveProgress();
-        // küçük güncelleme: başlığı yeniden hesaplayabiliriz ama şart değil
+    catWrap.querySelectorAll("[data-cat]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const key = btn.getAttribute("data-cat");
+        state.view = "category";
+        state.categoryKey = key;
+        await renderCategory(tab, key);
       });
     });
+  } catch (e) {
+    renderError($("#home-categories"), "Anasayfa yüklenirken hata oluştu.", e);
   }
 }
 
-function renderSeasons(cat, item, seasons, node) {
-  const doneMap = node.episodes[item.id] || {};
-  return seasons
-    .map((s) => {
-      const eps = Array.isArray(s.episodes) ? s.episodes : [];
-      const seasonNo = s.season ?? "?";
-      return `
-        <div class="season">
-          <div class="season__title">${esc(item.title)} • ${seasonNo}. Sezon</div>
-          <div class="season__list">
-            ${eps
-              .map((name, idx) => {
-                const key = `${seasonNo}|${idx}`;
-                const checked = !!doneMap[key];
-                return `
-                  <label class="ep">
-                    <input type="checkbox" data-ep="${esc(key)}" ${checked ? "checked" : ""}/>
-                    <span>${esc(name)}</span>
-                  </label>
-                `;
-              })
-              .join("")}
+async function renderCategory(tab, categoryKey) {
+  showScreen("list");
+
+  screenList.innerHTML = `
+    <div class="card">
+      <button class="btn" id="btn-back-home">← Liste</button>
+      <h2 id="cat-title" style="margin:12px 0 6px 0;"></h2>
+      <div id="cat-sub" style="opacity:.8;"></div>
+    </div>
+
+    <div id="items" style="margin-top:14px;"></div>
+  `;
+
+  $("#btn-back-home").addEventListener("click", async () => {
+    state.view = "home";
+    state.categoryKey = null;
+    await renderHome(tab);
+  });
+
+  try {
+    const idx = await loadTabIndex(tab);
+    const cat = (idx.categories || []).find((c) => c.key === categoryKey);
+    $("#cat-title").textContent = cat?.title || categoryKey;
+
+    const items = await getCategoryItems(idx, categoryKey, tab);
+    $("#cat-sub").textContent = `${items.length} öğe`;
+
+    const store = loadStore();
+    const wrap = $("#items");
+
+    wrap.innerHTML = items
+      .map((it, i) => {
+        const id = makeItemId(tab, categoryKey, i);
+        const checked = !!store[id];
+
+        const title = it.title || it.name || `Öğe ${i + 1}`;
+        const type = it.type || it.kind || ""; // Film / Dizi vs
+        const year = it.year ? ` • ${it.year}` : "";
+
+        return `
+          <div class="card item" data-idx="${i}" style="display:flex; align-items:center; gap:12px; cursor:pointer;">
+            <input type="checkbox" data-check="${i}" ${checked ? "checked" : ""} style="transform:scale(1.2); cursor:pointer;" />
+            <div style="flex:1;">
+              <div style="font-weight:800; font-size:18px;">${escapeHtml(title)}</div>
+              <div style="opacity:.75; margin-top:2px;">${escapeHtml(type)}${escapeHtml(year)}</div>
+            </div>
           </div>
-        </div>
-      `;
-    })
-    .join("");
-}
+        `;
+      })
+      .join("");
 
-// -----------------------------
-// Navigation
-// -----------------------------
-async function openCategory(cat) {
-  try {
-    const rawItems = await loadCategoryItems(cat);
-    const items = rawItems.map(normalizeItem);
-    state.list = items;
-    renderCategoryList(cat, items);
-  } catch (err) {
-    renderError("Liste yüklenemedi: " + (err?.message || err));
+    // checkbox click (kartı açmadan)
+    wrap.querySelectorAll("[data-check]").forEach((cb) => {
+      cb.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const i = Number(cb.getAttribute("data-check"));
+        const id = makeItemId(tab, categoryKey, i);
+        const s = loadStore();
+        s[id] = cb.checked;
+        saveStore(s);
+      });
+    });
+
+    // kart click -> detail
+    wrap.querySelectorAll(".item").forEach((row) => {
+      row.addEventListener("click", async () => {
+        const i = Number(row.getAttribute("data-idx"));
+        state.view = "detail";
+        state.itemKey = i;
+        await renderDetail(tab, categoryKey, i);
+      });
+    });
+  } catch (e) {
+    renderError($("#items"), "Liste yüklenirken hata oluştu.", e);
   }
 }
 
-function openDetail(cat, item) {
-  try {
-    renderDetail(cat, item);
-  } catch (err) {
-    renderError("Detay açılamadı: " + (err?.message || err));
-  }
-}
-
-// -----------------------------
-// Error
-// -----------------------------
-function renderError(msg) {
+async function renderDetail(tab, categoryKey, idxInCat) {
   showScreen("detail");
-  elScreenDetail.innerHTML = `
-    <header class="header">
-      <h2>Hata</h2>
-    </header>
-    <div class="detail">
-      <div class="empty">${esc(msg)}</div>
+
+  screenDetail.innerHTML = `
+    <div class="card">
+      <button class="btn" id="btn-back-cat">← Liste</button>
+      <div id="detail-content" style="margin-top:12px;"></div>
     </div>
   `;
-  console.error(msg);
-}
 
-// -----------------------------
-// Boot
-// -----------------------------
-async function boot() {
+  $("#btn-back-cat").addEventListener("click", async () => {
+    state.view = "category";
+    await renderCategory(tab, categoryKey);
+  });
+
   try {
-    setActiveTabUI(state.activeTab);
+    const tabIndex = await loadTabIndex(tab);
+    const items = await getCategoryItems(tabIndex, categoryKey, tab);
+    const it = items[idxInCat];
 
-    // Tab events
-    elTabMarvel.addEventListener("click", async () => {
-      state.activeTab = "marvel";
-      setActiveTabUI("marvel");
-      await loadAndRenderHome();
+    if (!it) throw new Error("Öğe bulunamadı.");
+
+    const store = loadStore();
+    const id = makeItemId(tab, categoryKey, idxInCat);
+    const checked = !!store[id];
+
+    const title = it.title || it.name || "Başlık yok";
+    const type = it.type || it.kind || "";
+    const year = it.year ? `${it.year}` : "";
+
+    $("#detail-content").innerHTML = `
+      <h2 style="margin:0 0 8px 0;">${escapeHtml(title)}</h2>
+      <div style="opacity:.8; margin-bottom:12px;">${escapeHtml(type)} ${year ? "• " + escapeHtml(year) : ""}</div>
+
+      <label style="display:flex; gap:10px; align-items:center; cursor:pointer;">
+        <input type="checkbox" id="detail-check" ${checked ? "checked" : ""} style="transform:scale(1.2);" />
+        <span>İzlendi olarak işaretle</span>
+      </label>
+
+      ${it.note ? `<div style="margin-top:12px; opacity:.85;">${escapeHtml(it.note)}</div>` : ""}
+    `;
+
+    $("#detail-check").addEventListener("change", (e) => {
+      const s = loadStore();
+      s[id] = e.target.checked;
+      saveStore(s);
     });
-
-    elTabStarwars.addEventListener("click", async () => {
-      state.activeTab = "starwars";
-      setActiveTabUI("starwars");
-      await loadAndRenderHome();
-    });
-
-    await loadAndRenderHome();
-  } catch (err) {
-    renderError("Anasayfa yüklenirken hata oluştu. " + (err?.message || err));
+  } catch (e) {
+    renderError($("#detail-content"), "Detay yüklenirken hata oluştu.", e);
   }
 }
 
-async function loadAndRenderHome() {
-  state.homeIndex = await loadHomeIndex(state.activeTab);
-  // index dizisi bekliyoruz: [{id,title,file}, ...]
-  if (!Array.isArray(state.homeIndex)) state.homeIndex = [];
-  renderHome(state.homeIndex);
+/* -----------------------------
+   Init
+   ----------------------------- */
+
+function bindTabs() {
+  btnTabMarvel?.addEventListener("click", async () => {
+    setActiveTab("marvel");
+    state.view = "home";
+    await renderHome("marvel");
+  });
+
+  btnTabStarwars?.addEventListener("click", async () => {
+    setActiveTab("starwars");
+    state.view = "home";
+    await renderHome("starwars");
+  });
+}
+
+async function boot() {
+  bindTabs();
+  setActiveTab("marvel");
+  await renderHome("marvel");
 }
 
 boot();
