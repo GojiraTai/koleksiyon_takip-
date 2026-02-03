@@ -7,16 +7,76 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <header class="header">
-    <div class="header__brand">
-      <div class="header__title">Koleksiyon</div>
-      <div class="header__sub">Marvel & Star Wars İzleme Takibi</div>
-    </div>
-    <div class="crumbs" id="crumbs"></div>
+  <header class="topbar">
+    <h1>Koleksiyon</h1>
+    <div class="subtitle">Marvel & Star Wars İzleme Takibi</div>
   </header>
 
   <main class="wrap">
-    <div id="app"></div>
+    <!-- Home -->
+    <section id="screen-home" class="screen active">
+      <div class="grid2">
+        <button class="tile brand marvel" id="btn-marvel">
+          <div class="tileTitle">Marvel</div>
+          <div class="tileSub">Koleksiyonlar</div>
+        </button>
+        <button class="tile brand starwars" id="btn-starwars" disabled>
+          <div class="tileTitle">Star Wars</div>
+          <div class="tileSub">Sonra ekleyeceğiz</div>
+        </button>
+      </div>
+    </section>
+
+    <!-- Marvel Hub -->
+    <section id="screen-marvel" class="screen">
+      <div class="bar">
+        <button class="back" id="back-home">← Geri</button>
+        <div class="barTitle">Marvel</div>
+      </div>
+
+      <div class="grid8">
+        <button class="tile small" id="btn-mcu">
+          <div class="tileTitle">MCU</div>
+          <div class="tileSub">İzleme sırası</div>
+        </button>
+
+        <button class="tile small" disabled><div class="tileTitle">Mutant Saga</div><div class="tileSub">sonra</div></button>
+        <button class="tile small" disabled><div class="tileTitle">Sony's Spider-Man Universe</div><div class="tileSub">sonra</div></button>
+        <button class="tile small" disabled><div class="tileTitle">The Void</div><div class="tileSub">sonra</div></button>
+        <button class="tile small" disabled><div class="tileTitle">Lego</div><div class="tileSub">sonra</div></button>
+        <button class="tile small" disabled><div class="tileTitle">Marvel Klasikler</div><div class="tileSub">sonra</div></button>
+        <button class="tile small" disabled><div class="tileTitle">Marvel Animated Series</div><div class="tileSub">sonra</div></button>
+        <button class="tile small" disabled><div class="tileTitle">Marvel Anime</div><div class="tileSub">sonra</div></button>
+      </div>
+    </section>
+
+    <!-- List Screen -->
+    <section id="screen-list" class="screen">
+      <div class="bar">
+        <button class="back" id="back-prev">← Geri</button>
+        <div class="barTitle" id="list-title">Liste</div>
+        <div class="barRight">
+          <div class="progressText" id="progressText">0%</div>
+        </div>
+      </div>
+
+      <div class="progress">
+        <div class="progressFill" id="progressFill" style="width:0%"></div>
+      </div>
+
+      <div id="list" class="list"></div>
+    </section>
+
+    <!-- Season/Episode Screen -->
+    <section id="screen-season" class="screen">
+      <div class="bar">
+        <button class="back" id="back-list">← Liste</button>
+        <div class="barTitle" id="season-title">Sezon</div>
+      </div>
+
+      <div id="season-meta" class="seasonMeta"></div>
+      <div id="episodes" class="episodes"></div>
+    </section>
   </main>
 
   <script type="module" src="./app.js"></script>
