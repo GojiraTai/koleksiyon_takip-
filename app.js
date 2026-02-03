@@ -1,4 +1,4 @@
-import MCU from "./data/mcu.collection.js";
+import MCU from "./data/marvel/mcu.collection.js";
 
 const OMDB_API_KEY = "a57784cc";
 const STORAGE_KEY = "nova_koleksiyon_v2";
