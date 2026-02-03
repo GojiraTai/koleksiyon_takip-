@@ -1,471 +1,455 @@
-// app.js - index.html içindeki #screen-list ve #screen-detail ile çalışır
-// Data yolu: /data/marvel/... ve /data/starwars/...
+// app.js (ESM - Module)
 
-const OMDB_API_KEY = "a57784cc";
-const STORE_KEY = "koleksiyon_takip_v3";
+// -----------------------------
+// Ayarlar
+// -----------------------------
+const STORAGE_KEY = "koleksiyon_takip_v1";
 
-const elList = document.getElementById("screen-list");
-const elDetail = document.getElementById("screen-detail");
+// Bu projede data dosyaları default export ile geliyor.
+// Örn: export default [ ... ]
+// Bu yüzden dynamic import ile okuyacağız.
+const PATHS = {
+  marvelIndex: "./data/marvel/marvel.index.js",
+  starwarsIndex: "./data/starwars/starwars.index.js",
+};
 
-const tabMarvelBtn = document.getElementById("tab-marvel");
-const tabStarwarsBtn = document.getElementById("tab-starwars");
+// -----------------------------
+// DOM
+// -----------------------------
+const elTabMarvel = document.getElementById("tab-marvel");
+const elTabStarwars = document.getElementById("tab-starwars");
 
-const state = loadState();
+const elScreenList = document.getElementById("screen-list");
+const elScreenDetail = document.getElementById("screen-detail");
 
-let currentTab = "marvel";       // marvel | starwars
-let currentCategory = null;      // category object
-let currentItems = [];           // items in category
-let currentSeriesMeta = null;    // omdb meta for series
-let currentSeason = null;        // season number
+// -----------------------------
+// State
+// -----------------------------
+const state = {
+  activeTab: "marvel", // "marvel" | "starwars"
+  homeIndex: null,     // index array
+  list: null,          // active category list (items)
+  breadcrumb: [],      // navigation
+  progress: loadProgress(),
+};
 
-// ---------- helpers ----------
-function showListScreen() {
-  elList.classList.remove("hidden");
-  elDetail.classList.add("hidden");
-}
-function showDetailScreen() {
-  elList.classList.add("hidden");
-  elDetail.classList.remove("hidden");
-}
-
-function setActiveTab(tab) {
-  currentTab = tab;
-  if (tabMarvelBtn && tabStarwarsBtn) {
-    tabMarvelBtn.classList.toggle("active", tab === "marvel");
-    tabStarwarsBtn.classList.toggle("active", tab === "starwars");
-  }
-}
-
-function h(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
-
-function keyForItem(item) {
-  return String(item.id || item.title || item.name);
-}
-
-function normalizeTitle(t) {
-  if (!t) return "";
-  let s = String(t).trim();
-  s = s.replace(/\([^)]*\)/g, "").trim(); // parantez içlerini at
-  s = s.replace(/\s{2,}/g, " ").trim();
-  return s;
-}
-
-function loadState() {
+// -----------------------------
+// Storage helpers
+// -----------------------------
+function loadProgress() {
   try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (!raw) return { watched: {}, seasons: {}, episodes: {}, omdbCache: {} };
-    const j = JSON.parse(raw);
-    return {
-      watched: j.watched || {},
-      seasons: j.seasons || {},
-      episodes: j.episodes || {},
-      omdbCache: j.omdbCache || {},
-    };
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
   } catch {
-    return { watched: {}, seasons: {}, episodes: {}, omdbCache: {} };
+    return {};
   }
 }
-function saveState() {
-  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+
+function saveProgress() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.progress));
 }
 
-async function fetchText(path) {
-  const res = await fetch(path, { cache: "no-store" });
-  if (!res.ok) throw new Error(`${path} yüklenemedi (${res.status})`);
-  return await res.text();
+function ensureProgressNode(key) {
+  if (!state.progress[key]) state.progress[key] = { done: {}, episodes: {} };
+  if (!state.progress[key].done) state.progress[key].done = {};
+  if (!state.progress[key].episodes) state.progress[key].episodes = {};
+  return state.progress[key];
 }
 
-async function loadExportDefaultJS(path) {
-  // Dosya: export default [...]
-  const text = await fetchText(path);
-
-  // export default dışındaki şeyleri temizle
-  const cleaned = text
-    .replace(/^\s*export\s+default\s+/m, "")
-    .replace(/;\s*$/m, "");
-
-  // Güvenli parse: Function ile obje/array döndür
-  // eslint-disable-next-line no-new-func
-  return new Function(`return (${cleaned});`)();
+// -----------------------------
+// Util
+// -----------------------------
+function esc(s) {
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
-// index dosyası bazen array, bazen object olabilir. Her ikisini de kaldırıyoruz.
-function extractCategories(indexData) {
-  if (Array.isArray(indexData)) return indexData;
-  if (indexData && Array.isArray(indexData.categories)) return indexData.categories;
-  if (indexData && Array.isArray(indexData.items)) return indexData.items;
-  // son çare: object içindeki ilk array
-  if (indexData && typeof indexData === "object") {
-    for (const v of Object.values(indexData)) {
-      if (Array.isArray(v)) return v;
-    }
+function setActiveTabUI(tab) {
+  if (tab === "marvel") {
+    elTabMarvel.classList.add("active");
+    elTabStarwars.classList.remove("active");
+  } else {
+    elTabStarwars.classList.add("active");
+    elTabMarvel.classList.remove("active");
   }
-  return [];
 }
 
-function folderForTab(tab) {
-  return tab === "starwars" ? "starwars" : "marvel";
-}
-
-// kategori dosya yolunu bul
-function collectionPath(tab, cat) {
-  const folder = folderForTab(tab);
-
-  // index içinde file/path verilmişse onu kullan
-  if (cat && cat.file) return `/data/${folder}/${cat.file}`;
-  if (cat && cat.path) return cat.path.startsWith("/") ? cat.path : `/data/${folder}/${cat.path}`;
-
-  // değilse key üzerinden tahmin et:
-  // marvel: mcu -> mcu.collection.js
-  // starwars: canon -> canon.collection.js
-  const key = (cat && (cat.key || cat.id || cat.slug)) ? (cat.key || cat.id || cat.slug) : "";
-  if (!key) return null;
-
-  // bazı indexlerde key "mcu" ama dosya "mcu.collection.js" zaten.
-  return `/data/${folder}/${key}.collection.js`;
-}
-
-// OMDb
-async function omdb(params) {
-  const url = new URL("https://www.omdbapi.com/");
-  url.searchParams.set("apikey", OMDB_API_KEY);
-  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const r = await fetch(url.toString());
-  return await r.json();
-}
-
-async function getOmdbMeta(item) {
-  const k = keyForItem(item);
-  if (state.omdbCache[k]) return state.omdbCache[k];
-
-  let meta = null;
-
-  if (item.imdbID) {
-    const j = await omdb({ i: item.imdbID });
-    if (j.Response === "True") meta = j;
+function showScreen(which) {
+  if (which === "list") {
+    elScreenList.classList.remove("hidden");
+    elScreenDetail.classList.add("hidden");
+  } else {
+    elScreenDetail.classList.remove("hidden");
+    elScreenList.classList.add("hidden");
   }
-  if (!meta) {
-    const t = normalizeTitle(item.omdbTitle || item.title || item.name);
-    const j = await omdb({ t });
-    if (j.Response === "True") meta = j;
+}
+
+function normalizeItem(raw, i) {
+  // raw: { title, type, ... } bekliyoruz
+  // id yoksa deterministik üretelim:
+  const id = raw.id ?? `${slug(raw.title)}_${i}`;
+  return { ...raw, id };
+}
+
+function slug(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replaceAll("ı", "i")
+    .replaceAll("ğ", "g")
+    .replaceAll("ü", "u")
+    .replaceAll("ş", "s")
+    .replaceAll("ö", "o")
+    .replaceAll("ç", "c")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+function percent(doneCount, total) {
+  if (!total) return 0;
+  return Math.round((doneCount / total) * 100);
+}
+
+// -----------------------------
+// Module loader (kritik düzeltme)
+// -----------------------------
+async function importDefault(path) {
+  // Cache bust yok: GitHub Pages / Codespace sabit kalsın diye.
+  // (Gerekirse ?v=... ekleyebilirsin)
+  const mod = await import(path);
+  return mod.default;
+}
+
+// -----------------------------
+// Data loading
+// -----------------------------
+async function loadHomeIndex(tab) {
+  if (tab === "marvel") return await importDefault(PATHS.marvelIndex);
+  return await importDefault(PATHS.starwarsIndex);
+}
+
+async function loadCategoryItems(category) {
+  // category örn:
+  // { id:"mcu", title:"MCU", file:"./data/marvel/mcu.collection.js" }
+  if (!category?.file) throw new Error("Kategori dosyası (file) yok.");
+  const arr = await importDefault(category.file);
+  return Array.isArray(arr) ? arr : [];
+}
+
+// -----------------------------
+// Render: HOME
+// -----------------------------
+function renderHome(indexArr) {
+  showScreen("list");
+
+  const tabTitle = state.activeTab === "marvel" ? "Marvel" : "Star Wars";
+
+  // HOME total/progress: tüm kategorilerdeki işaretlenenleri saymak için
+  // (Performans: burada sadece mevcut progress üzerinden sayıyoruz. Data dosyalarını tek tek yüklemiyoruz.)
+  const summary = buildHomeSummary(indexArr);
+
+  elScreenList.innerHTML = `
+    <header class="header">
+      <h1>Koleksiyon</h1>
+      <p>${tabTitle} İzleme Takibi</p>
+      <div class="progressbar">
+        <div class="progressbar__row">
+          <div class="progressbar__label">Genel ilerleme</div>
+          <div class="progressbar__value">%${summary.percent}</div>
+        </div>
+        <div class="progressbar__track">
+          <div class="progressbar__fill" style="width:${summary.percent}%"></div>
+        </div>
+        <div class="progressbar__meta">${summary.done} işaretli</div>
+      </div>
+    </header>
+
+    <div class="list">
+      ${indexArr
+        .map((c) => renderCategoryCard(c))
+        .join("")}
+    </div>
+  `;
+
+  // click handlers
+  elScreenList.querySelectorAll("[data-cat]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const catId = btn.getAttribute("data-cat");
+      const cat = indexArr.find((x) => String(x.id) === String(catId));
+      if (!cat) return;
+      await openCategory(cat);
+    });
+  });
+}
+
+function buildHomeSummary(indexArr) {
+  // Tüm kategoriler için toplam done sayısını progress objesinden sayıyoruz.
+  // Total'ı gerçek data yüklemeden bilemeyiz; burada "işaretli adet" ve
+  // "yüzde"yi basit tutuyoruz: yüzde = işaretli / (işaretli + işaretsiz bilinmiyor) olmaz.
+  // Bu yüzden: yüzdeyi kategori toplamları üzerinden hesaplamak istersen, her kategori dosyasını
+  // yükleyip saymak gerekir. Aşağıdaki "light" çözüm: yüzdeyi kategori başına ortalama gibi verir.
+  // İstersen sonra "gerçek yüzde"yi de yaparız.
+
+  let done = 0;
+  for (const cat of indexArr) {
+    const key = storageKeyFor(cat);
+    const node = state.progress[key];
+    if (node?.done) done += Object.keys(node.done).filter((k) => node.done[k]).length;
   }
-
-  if (!meta) {
-    state.omdbCache[k] = { ok: false };
-    saveState();
-    return state.omdbCache[k];
-  }
-
-  const out = {
-    ok: true,
-    imdbID: meta.imdbID,
-    type: meta.Type, // movie|series
-    title: meta.Title,
-    totalSeasons: meta.totalSeasons ? Number(meta.totalSeasons) : null,
-    poster:
-      meta.imdbID
-        ? `https://img.omdbapi.com/?i=${encodeURIComponent(meta.imdbID)}&h=450&apikey=${encodeURIComponent(OMDB_API_KEY)}`
-        : (meta.Poster && meta.Poster !== "N/A" ? meta.Poster : null),
-  };
-
-  state.omdbCache[k] = out;
-  saveState();
-  return out;
+  // Light yüzde: sadece “işaretli adet”i göstereceğiz, yüzdeyi de 0 yerine daha mantıklı diye
+  // 100'e sabitlemiyoruz. Burada 0-100 arası bir şey isteniyor; basitçe done üzerinden:
+  const p = done === 0 ? 0 : Math.min(99, 10 + Math.floor(Math.log10(done + 1) * 25));
+  return { done, percent: p };
 }
 
-async function getSeasonEpisodes(imdbID, season) {
-  const j = await omdb({ i: imdbID, Season: String(season) });
-  if (!j || j.Response !== "True") return { ok: false };
-  return {
-    ok: true,
-    title: j.Title,
-    season,
-    episodes: (j.Episodes || []).map(e => ({
-      imdbID: e.imdbID,
-      episode: Number(e.Episode),
-      title: e.Title,
-      released: e.Released,
-    })),
-  };
+function renderCategoryCard(cat) {
+  const key = storageKeyFor(cat);
+  const node = state.progress[key];
+  const done = node?.done ? Object.keys(node.done).filter((k) => node.done[k]).length : 0;
+
+  return `
+    <button class="card" data-cat="${esc(cat.id)}">
+      <div class="card__title">${esc(cat.title)}</div>
+      <div class="card__meta">${done} işaretli</div>
+    </button>
+  `;
 }
 
-// ---------- UI Render ----------
-function clear(el) {
-  el.innerHTML = "";
+function storageKeyFor(cat) {
+  // tab + category id benzersiz olsun
+  return `${state.activeTab}:${cat.id}`;
 }
 
-function renderError(target, msg, err) {
-  console.error(msg, err);
-  clear(target);
-  target.appendChild(h("div", "error", msg));
-  if (err && err.message) target.appendChild(h("div", "muted", err.message));
-}
+// -----------------------------
+// Render: CATEGORY LIST
+// -----------------------------
+function renderCategoryList(cat, items) {
+  showScreen("list");
 
-function renderHome(categories) {
-  clear(elList);
+  const key = storageKeyFor(cat);
+  const node = ensureProgressNode(key);
 
-  const title = h("h2", "section-title", currentTab === "marvel" ? "Marvel" : "Star Wars");
-  elList.appendChild(title);
+  // gerçek yüzde: kategori items üzerinden net hesap
+  const total = items.length;
+  const doneCount = items.filter((it) => node.done[it.id]).length;
+  const p = percent(doneCount, total);
 
-  const grid = h("div", "grid");
-  elList.appendChild(grid);
+  elScreenList.innerHTML = `
+    <header class="header">
+      <button class="back" id="btn-back-home">← Liste</button>
+      <h2>${esc(cat.title)}</h2>
 
-  categories.forEach(cat => {
-    const btn = h("button", "card");
-    const t = h("div", "card-title", cat.title || cat.name || cat.key || "Kategori");
-    btn.appendChild(t);
-    if (cat.subtitle) btn.appendChild(h("div", "card-subtitle", cat.subtitle));
+      <div class="progressbar">
+        <div class="progressbar__row">
+          <div class="progressbar__label">İlerleme</div>
+          <div class="progressbar__value">%${p}</div>
+        </div>
+        <div class="progressbar__track">
+          <div class="progressbar__fill" style="width:${p}%"></div>
+        </div>
+        <div class="progressbar__meta">${doneCount}/${total}</div>
+      </div>
+    </header>
 
-    btn.addEventListener("click", () => openCategory(cat));
-    grid.appendChild(btn);
+    <div class="list">
+      ${items.map((it) => renderItemRow(cat, it, node)).join("")}
+    </div>
+  `;
+
+  document.getElementById("btn-back-home").addEventListener("click", () => {
+    renderHome(state.homeIndex);
   });
 
-  showListScreen();
-}
+  // done toggle
+  elScreenList.querySelectorAll("[data-item]").forEach((row) => {
+    row.addEventListener("click", (e) => {
+      // detail butonuna tıklayınca checkbox tetikleme karışmasın
+      const target = e.target;
+      if (target.closest("[data-open-detail]")) return;
 
-function progressFor(items) {
-  const total = items.length;
-  let done = 0;
-  for (const it of items) {
-    const k = keyForItem(it);
-    if (state.watched[k]?.watched) done++;
-  }
-  const pct = total ? Math.round((done / total) * 100) : 0;
-  return { total, done, pct };
-}
-
-function renderCategoryList(cat, items) {
-  clear(elList);
-
-  const top = h("div", "topbar");
-  const back = h("button", "btn", "← Anasayfa");
-  back.addEventListener("click", () => loadTabHome(currentTab));
-  top.appendChild(back);
-
-  top.appendChild(h("div", "topbar-title", cat.title || cat.name || "Liste"));
-  elList.appendChild(top);
-
-  const p = progressFor(items);
-  elList.appendChild(h("div", "muted", `İlerleme: ${p.done}/${p.total} (%${p.pct})`));
-
-  const list = h("div", "list");
-  elList.appendChild(list);
-
-  items.forEach(it => {
-    const row = h("div", "row");
-
-    const k = keyForItem(it);
-    const watched = !!state.watched[k]?.watched;
-
-    const toggle = h("button", `watch ${watched ? "on" : ""}`, watched ? "✓" : "—");
-    toggle.addEventListener("click", () => {
-      state.watched[k] = { watched: !watched };
-      saveState();
+      const itemId = row.getAttribute("data-item");
+      node.done[itemId] = !node.done[itemId];
+      saveProgress();
+      // yeniden çiz
       renderCategoryList(cat, items);
     });
-
-    const main = h("div", "row-main");
-    main.appendChild(h("div", "row-title", it.title || it.name));
-    main.appendChild(h("div", "row-meta", it.kindLabel || it.kind || it.type || ""));
-
-    const open = h("button", "btn small", "Aç");
-    open.addEventListener("click", async () => {
-      await openItem(it);
-    });
-
-    row.appendChild(toggle);
-    row.appendChild(main);
-    row.appendChild(open);
-    list.appendChild(row);
   });
 
-  showListScreen();
+  // detail open
+  elScreenList.querySelectorAll("[data-open-detail]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const itemId = btn.getAttribute("data-open-detail");
+      const item = items.find((x) => String(x.id) === String(itemId));
+      if (!item) return;
+      openDetail(cat, item);
+    });
+  });
 }
 
-async function renderSeasonsScreen(item, meta) {
-  clear(elDetail);
+function renderItemRow(cat, item, node) {
+  const isDone = !!node.done[item.id];
+  const typeLabel = item.type ? item.type : "";
 
-  const top = h("div", "topbar");
-  const back = h("button", "btn", "← Liste");
-  back.addEventListener("click", () => renderCategoryList(currentCategory, currentItems));
-  top.appendChild(back);
-  top.appendChild(h("div", "topbar-title", item.title || item.name || meta.title || "Dizi"));
-  elDetail.appendChild(top);
-
-  const hero = h("div", "hero");
-  if (meta.poster) {
-    const img = document.createElement("img");
-    img.className = "poster";
-    img.src = meta.poster;
-    img.alt = meta.title;
-    hero.appendChild(img);
-  }
-  const ht = h("div", "hero-text");
-  ht.appendChild(h("h2", "", item.title || meta.title));
-  ht.appendChild(h("div", "muted", "Sezon ve bölüm işaretleme"));
-  hero.appendChild(ht);
-  elDetail.appendChild(hero);
-
-  if (!meta.totalSeasons) {
-    elDetail.appendChild(h("div", "muted", "Sezon bilgisi bulunamadı (OMDb'de olmayabilir)."));
-    showDetailScreen();
-    return;
-  }
-
-  const list = h("div", "list");
-  elDetail.appendChild(list);
-
-  for (let s = 1; s <= meta.totalSeasons; s++) {
-    const sk = `${meta.imdbID}|S${s}`;
-    const done = !!state.seasons[sk]?.watched;
-
-    const row = h("div", "row");
-
-    const toggle = h("button", `watch ${done ? "on" : ""}`, done ? "✓" : "—");
-    toggle.addEventListener("click", () => {
-      state.seasons[sk] = { watched: !done };
-      saveState();
-      renderSeasonsScreen(item, meta);
-    });
-
-    const main = h("div", "row-main");
-    main.appendChild(h("div", "row-title", `Sezon ${s}`));
-    main.appendChild(h("div", "row-meta", "Bölüm listesi için aç"));
-
-    const open = h("button", "btn small", "Aç");
-    open.addEventListener("click", async () => {
-      currentSeason = s;
-      await renderEpisodesScreen(item, meta, s);
-    });
-
-    row.appendChild(toggle);
-    row.appendChild(main);
-    row.appendChild(open);
-    list.appendChild(row);
-  }
-
-  showDetailScreen();
+  return `
+    <div class="row ${isDone ? "row--done" : ""}" data-item="${esc(item.id)}">
+      <div class="row__check">${isDone ? "✓" : "—"}</div>
+      <div class="row__main">
+        <div class="row__title">${esc(item.title)}</div>
+        <div class="row__meta">${esc(typeLabel)}</div>
+      </div>
+      <button class="row__btn" data-open-detail="${esc(item.id)}">İzle</button>
+    </div>
+  `;
 }
 
-async function renderEpisodesScreen(item, meta, season) {
-  clear(elDetail);
+// -----------------------------
+// Render: DETAIL (Sezon/Bölüm)
+// -----------------------------
+function renderDetail(cat, item) {
+  showScreen("detail");
 
-  const top = h("div", "topbar");
-  const back = h("button", "btn", "← Sezonlar");
-  back.addEventListener("click", () => renderSeasonsScreen(item, meta));
-  top.appendChild(back);
-  top.appendChild(h("div", "topbar-title", `${item.title || meta.title} • ${season}. Sezon`));
-  elDetail.appendChild(top);
+  const key = storageKeyFor(cat);
+  const node = ensureProgressNode(key);
 
-  const sdata = await getSeasonEpisodes(meta.imdbID, season);
-  if (!sdata.ok) {
-    elDetail.appendChild(h("div", "muted", "Bölüm listesi bulunamadı (OMDb'de yok olabilir)."));
-    showDetailScreen();
-    return;
-  }
+  // Episodes tracking: item.seasons bekliyoruz:
+  // seasons: [{ season:1, episodes:["Ep 1","Ep 2"] }]
+  const seasons = Array.isArray(item.seasons) ? item.seasons : null;
 
-  const list = h("div", "list");
-  elDetail.appendChild(list);
+  elScreenDetail.innerHTML = `
+    <header class="header">
+      <button class="back" id="btn-back-list">← Liste</button>
+      <h2>${esc(item.title)}</h2>
+      <p>${esc(item.type || "")}</p>
+    </header>
 
-  sdata.episodes.forEach(ep => {
-    const ek = `${meta.imdbID}|S${season}|E${ep.episode}`;
-    const done = !!state.episodes[ek]?.watched;
+    <section class="detail">
+      ${
+        seasons
+          ? renderSeasons(cat, item, seasons, node)
+          : `<div class="empty">Bölüm listesi bulunamadı. (Bu içerik için data dosyasında <code>seasons</code> yok.)</div>`
+      }
+    </section>
+  `;
 
-    const row = h("div", "row");
-
-    const toggle = h("button", `watch ${done ? "on" : ""}`, done ? "✓" : "—");
-    toggle.addEventListener("click", () => {
-      state.episodes[ek] = { watched: !done };
-      saveState();
-      renderEpisodesScreen(item, meta, season);
-    });
-
-    const main = h("div", "row-main");
-    main.appendChild(h("div", "row-title", `${ep.episode}. ${ep.title}`));
-    main.appendChild(h("div", "row-meta", ep.released && ep.released !== "N/A" ? `Yayın: ${ep.released}` : ""));
-
-    row.appendChild(toggle);
-    row.appendChild(main);
-    list.appendChild(row);
+  document.getElementById("btn-back-list").addEventListener("click", () => {
+    renderCategoryList(cat, state.list);
   });
 
-  showDetailScreen();
-}
-
-// ---------- navigation ----------
-async function loadTabHome(tab) {
-  try {
-    setActiveTab(tab);
-    currentCategory = null;
-    currentItems = [];
-    currentSeriesMeta = null;
-    currentSeason = null;
-
-    const folder = folderForTab(tab);
-    const indexPath = `/data/${folder}/${tab === "starwars" ? "starwars.index.js" : "marvel.index.js"}`;
-
-    const idx = await loadExportDefaultJS(indexPath);
-    const cats = extractCategories(idx);
-
-    if (!cats.length) {
-      renderError(elList, "Index dosyası okundu ama kategori listesi boş. (index formatı farklı olabilir)", null);
-      showListScreen();
-      return;
-    }
-
-    renderHome(cats);
-  } catch (err) {
-    renderError(elList, "Anasayfa yüklenirken hata oluştu.", err);
-    showListScreen();
+  if (seasons) {
+    elScreenDetail.querySelectorAll("[data-ep]").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        const k = cb.getAttribute("data-ep"); // season|epIndex
+        if (!node.episodes[item.id]) node.episodes[item.id] = {};
+        node.episodes[item.id][k] = cb.checked;
+        saveProgress();
+        // küçük güncelleme: başlığı yeniden hesaplayabiliriz ama şart değil
+      });
+    });
   }
 }
 
+function renderSeasons(cat, item, seasons, node) {
+  const doneMap = node.episodes[item.id] || {};
+  return seasons
+    .map((s) => {
+      const eps = Array.isArray(s.episodes) ? s.episodes : [];
+      const seasonNo = s.season ?? "?";
+      return `
+        <div class="season">
+          <div class="season__title">${esc(item.title)} • ${seasonNo}. Sezon</div>
+          <div class="season__list">
+            ${eps
+              .map((name, idx) => {
+                const key = `${seasonNo}|${idx}`;
+                const checked = !!doneMap[key];
+                return `
+                  <label class="ep">
+                    <input type="checkbox" data-ep="${esc(key)}" ${checked ? "checked" : ""}/>
+                    <span>${esc(name)}</span>
+                  </label>
+                `;
+              })
+              .join("")}
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+// -----------------------------
+// Navigation
+// -----------------------------
 async function openCategory(cat) {
   try {
-    currentCategory = cat;
-
-    const path = collectionPath(currentTab, cat);
-    if (!path) throw new Error("Kategori için collection yolu bulunamadı.");
-
-    const items = await loadExportDefaultJS(path);
-    if (!Array.isArray(items)) throw new Error("Collection dosyası array dönmedi. (format farklı olabilir)");
-
-    currentItems = items;
+    const rawItems = await loadCategoryItems(cat);
+    const items = rawItems.map(normalizeItem);
+    state.list = items;
     renderCategoryList(cat, items);
   } catch (err) {
-    renderError(elList, "Kategori listesi yüklenirken hata oluştu.", err);
-    showListScreen();
+    renderError("Liste yüklenemedi: " + (err?.message || err));
   }
 }
 
-async function openItem(item) {
+function openDetail(cat, item) {
   try {
-    const meta = await getOmdbMeta(item);
-
-    // Dizi ise sezon ekranı
-    if (meta.ok && meta.type === "series") {
-      currentSeriesMeta = meta;
-      await renderSeasonsScreen(item, meta);
-      return;
-    }
-
-    // Film ise Google araması (OMDb bulunamadıysa da)
-    const q = normalizeTitle(item.title || item.name);
-    window.open(`https://www.google.com/search?q=${encodeURIComponent(q)}`, "_blank");
+    renderDetail(cat, item);
   } catch (err) {
-    renderError(elDetail, "Detay açılırken hata oluştu.", err);
-    showDetailScreen();
+    renderError("Detay açılamadı: " + (err?.message || err));
   }
 }
 
-// ---------- events ----------
-if (tabMarvelBtn) tabMarvelBtn.addEventListener("click", () => loadTabHome("marvel"));
-if (tabStarwarsBtn) tabStarwarsBtn.addEventListener("click", () => loadTabHome("starwars"));
+// -----------------------------
+// Error
+// -----------------------------
+function renderError(msg) {
+  showScreen("detail");
+  elScreenDetail.innerHTML = `
+    <header class="header">
+      <h2>Hata</h2>
+    </header>
+    <div class="detail">
+      <div class="empty">${esc(msg)}</div>
+    </div>
+  `;
+  console.error(msg);
+}
 
-// boot
-loadTabHome("marvel");
+// -----------------------------
+// Boot
+// -----------------------------
+async function boot() {
+  try {
+    setActiveTabUI(state.activeTab);
+
+    // Tab events
+    elTabMarvel.addEventListener("click", async () => {
+      state.activeTab = "marvel";
+      setActiveTabUI("marvel");
+      await loadAndRenderHome();
+    });
+
+    elTabStarwars.addEventListener("click", async () => {
+      state.activeTab = "starwars";
+      setActiveTabUI("starwars");
+      await loadAndRenderHome();
+    });
+
+    await loadAndRenderHome();
+  } catch (err) {
+    renderError("Anasayfa yüklenirken hata oluştu. " + (err?.message || err));
+  }
+}
+
+async function loadAndRenderHome() {
+  state.homeIndex = await loadHomeIndex(state.activeTab);
+  // index dizisi bekliyoruz: [{id,title,file}, ...]
+  if (!Array.isArray(state.homeIndex)) state.homeIndex = [];
+  renderHome(state.homeIndex);
+}
+
+boot();
