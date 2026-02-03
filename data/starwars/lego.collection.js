@@ -1,0 +1,16 @@
+export default [
+  { id:"swl_001", title:"Lego Star Wars: Revenge of the Brick", kind:"short" },
+  { id:"swl_002", title:"Lego Star Wars: The Quest for R2-D2", kind:"short" },
+  { id:"swl_003", title:"Lego Star Wars: Bombad Bounty", kind:"short" },
+  { id:"swl_004", title:"Lego Star Wars: The Padawan Menace", kind:"special" },
+  { id:"swl_005", title:"Lego Star Wars: The Empire Strikes Out", kind:"special" },
+  { id:"swl_006", title:"Lego Star Wars: The Yoda Chronicles", kind:"series" },
+  { id:"swl_007", title:"Lego Star Wars: Droid Tales", kind:"series" },
+  { id:"swl_008", title:"Lego Star Wars: The Resistance Rises", kind:"series" },
+  { id:"swl_009", title:"Lego Star Wars: The Freemaker Adventures", kind:"series" },
+  { id:"swl_010", title:"Lego Star Wars: All-Stars", kind:"series" },
+  { id:"swl_011", title:"Lego Star Wars Holiday Special", kind:"special" },
+  { id:"swl_012", title:"Lego Star Wars: Terrifying Tales", kind:"special" },
+  { id:"swl_013", title:"Lego Star Wars: Summer Vacation", kind:"special" },
+  { id:"swl_014", title:"Lego Star Wars: Rebuild the Galaxy", kind:"series" },
+];
