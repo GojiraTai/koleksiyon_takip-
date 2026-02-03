@@ -1,419 +1,438 @@
-/* app.js - Koleksiyon Takip (vanilla JS)
-   - ES module dosyalarını (import/export default) fetch + eval ile çalıştırmak için mini loader içerir
-*/
+/* app.js - Koleksiyon Takip (stabil, import yok, sadece local data okur) */
+(() => {
+  "use strict";
 
-const $ = (sel, root = document) => root.querySelector(sel);
+  // ---------- DOM helpers ----------
+  const $ = (sel) => document.querySelector(sel);
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  };
 
-const screenList = $("#screen-list");
-const screenDetail = $("#screen-detail");
+  // ---------- Paths ----------
+  // data klasörü yapın:
+  // /data/marvel/marvel.index.js
+  // /data/marvel/mcu.collection.js, ...
+  // /data/starwars/starwars.index.js (varsa)
+  const PATHS = {
+    marvelIndex: "data/marvel/marvel.index.js",
+    starwarsIndex: "data/starwars/starwars.index.js",
+  };
 
-const btnTabMarvel = $("#tab-marvel");
-const btnTabStarwars = $("#tab-starwars");
+  // ---------- State ----------
+  const state = {
+    activeTab: "marvel",   // marvel | starwars
+    activeCategory: null,  // category key
+    index: { marvel: null, starwars: null },
+    items: [],             // current list items
+    checked: new Set(),    // localStorage
+  };
 
-const STORAGE_KEY = "koleksiyon_takip_v1";
-
-const state = {
-  tab: "marvel",          // "marvel" | "starwars"
-  view: "home",           // "home" | "category" | "detail"
-  categoryKey: null,
-  itemKey: null,
-};
-
-const cache = new Map(); // path -> exported default
-
-/* -----------------------------
-   Mini ESM Loader (import/export default)
-   ----------------------------- */
-
-// Basit path birleştirme
-function joinPath(base, rel) {
-  if (rel.startsWith("http")) return rel;
-  if (rel.startsWith("/")) return rel;
-
-  const baseParts = base.split("/").slice(0, -1); // dosya adını at
-  const relParts = rel.split("/");
-
-  for (const part of relParts) {
-    if (part === "." || part === "") continue;
-    if (part === "..") baseParts.pop();
-    else baseParts.push(part);
+  // ---------- Storage ----------
+  const STORAGE_KEY = "koleksiyon_takip_checked_v1";
+  function loadChecked() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) state.checked = new Set(arr);
+    } catch {}
   }
-  return baseParts.join("/");
-}
-
-// "import xxx from './a.js';" satırlarını yakala
-function parseImports(code) {
-  // sadece default import destekliyoruz: import name from "./file.js";
-  const re = /^\s*import\s+([A-Za-z_$][\w$]*)\s+from\s+["'](.+?)["']\s*;\s*$/gm;
-  const imports = [];
-  let m;
-  while ((m = re.exec(code)) !== null) {
-    imports.push({ name: m[1], from: m[2], full: m[0] });
-  }
-  return imports;
-}
-
-function stripImports(code) {
-  // import satırlarını tamamen sil
-  return code.replace(/^\s*import\s+[A-Za-z_$][\w$]*\s+from\s+["'](.+?)["']\s*;\s*$/gm, "");
-}
-
-function transformExportDefaultToReturn(code) {
-  // export default ....;  -> return ....;
-  // Bu projede default export tek ve en altta varsayımıyla çalışır.
-  return code.replace(/\bexport\s+default\b/g, "return");
-}
-
-async function loadExportDefaultJS(path) {
-  if (cache.has(path)) return cache.get(path);
-
-  const res = await fetch(path, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Dosya yüklenemedi: ${path} (${res.status})`);
-  let code = await res.text();
-
-  // import’ları çöz
-  const imports = parseImports(code);
-  const values = {};
-
-  for (const imp of imports) {
-    const childPath = joinPath(path, imp.from);
-    values[imp.name] = await loadExportDefaultJS(childPath);
+  function saveChecked() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([...state.checked]));
+    } catch {}
   }
 
-  // import satırlarını sil, export default'u return'e çevir
-  code = stripImports(code);
-  code = transformExportDefaultToReturn(code);
-
-  // Çalıştırılacak fonksiyon gövdesi:
-  // const mcu = __deps.mcu; ...
-  // return {...};
-  const depLines = Object.keys(values)
-    .map((k) => `const ${k} = __deps[${JSON.stringify(k)}];`)
-    .join("\n");
-
-  const wrapped = `${depLines}\n${code}`;
-
-  let exported;
-  try {
-    // new Function ile çalıştır
-    exported = new Function("__deps", wrapped)(values);
-  } catch (e) {
-    // Hata olursa daha anlaşılır göster
-    console.error("loadExportDefaultJS eval error:", path, e);
-    throw new Error(`JS parse/çalıştırma hatası: ${path}\n${e.message}`);
+  // ---------- Safe parse "export default ..." WITHOUT import/module ----------
+  async function fetchText(url) {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) throw new Error(`Dosya yüklenemedi: ${url} (${r.status})`);
+    return await r.text();
   }
 
-  cache.set(path, exported);
-  return exported;
-}
+  function evalExportDefault(code, urlLabel) {
+    // "export default ..." kısmını "return (...)"e çevirip çalıştırır.
+    // Bu sayede import statement yoksa sorunsuz.
+    const cleaned = code
+      .replace(/^\uFEFF/, "")
+      .replace(/export\s+default\s+/g, "return ");
 
-/* -----------------------------
-   Storage (izlendi işaretleri)
-   ----------------------------- */
-
-function loadStore() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-  } catch {
-    return {};
+    try {
+      // eslint-disable-next-line no-new-func
+      const fn = new Function(cleaned);
+      return fn();
+    } catch (e) {
+      throw new Error(`JS parse edilemedi: ${urlLabel}. ${e.message}`);
+    }
   }
-}
-function saveStore(data) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-}
-function makeItemId(tab, categoryKey, idx) {
-  return `${tab}::${categoryKey}::${idx}`;
-}
 
-/* -----------------------------
-   UI helpers
-   ----------------------------- */
+  async function loadExportDefaultJS(url) {
+    const txt = await fetchText(url);
+    return evalExportDefault(txt, url);
+  }
 
-function setActiveTab(tab) {
-  state.tab = tab;
-  btnTabMarvel.classList.toggle("active", tab === "marvel");
-  btnTabStarwars.classList.toggle("active", tab === "starwars");
-}
+  // ---------- Normalizers ----------
+  function normalizeIndex(obj) {
+    // beklenen index formatı:
+    // export default { title:"Marvel", categories:[{key,title}], libs:{ mcu:"./mcu.collection.js" } }
+    // Ama libs: {mcu, ...} olarak direkt diziyi veren yapılar da olabilir.
+    if (!obj || typeof obj !== "object") {
+      return { title: "Koleksiyon", categories: [], libs: {} };
+    }
+    const title = obj.title || obj.name || "Koleksiyon";
+    const categories = Array.isArray(obj.categories) ? obj.categories : [];
+    const libs = obj.libs && typeof obj.libs === "object" ? obj.libs : {};
+    return { title, categories, libs };
+  }
 
-function showScreen(which) {
-  // which: "list" | "detail"
-  if (which === "list") {
+  function normalizeCollection(raw) {
+    // collection dosyaları iki şekilde olabilir:
+    // 1) export default [ ...items ]
+    // 2) export default { items:[...], ... }
+    if (Array.isArray(raw)) return raw;
+    if (raw && typeof raw === "object") {
+      if (Array.isArray(raw.items)) return raw.items;
+      if (Array.isArray(raw.list)) return raw.list;
+      if (Array.isArray(raw.data)) return raw.data;
+    }
+    return [];
+  }
+
+  function getItemId(item, idx, scope) {
+    // mümkünse stabil id üret
+    const base =
+      item.id ||
+      item.imdbID ||
+      item.imdbId ||
+      item.tmdbId ||
+      item.slug ||
+      item.key ||
+      null;
+
+    if (base) return `${scope}:${base}`;
+
+    const name = getItemTitle(item, idx);
+    const year = item.year || item.releaseYear || "";
+    return `${scope}:${name}:${year}:${idx}`;
+  }
+
+  function getItemTitle(item, idx) {
+    return (
+      item.title ||
+      item.name ||
+      item.label ||
+      item.originalTitle ||
+      item.trTitle ||
+      item.display ||
+      `Öğe ${idx + 1}`
+    );
+  }
+
+  function getItemType(item) {
+    // movie / series / short vs
+    const t = (item.type || item.kind || item.mediaType || item.format || "").toString().toLowerCase();
+    if (t) return t;
+    // bazı listelerde "isSeries" gibi boolean olabilir:
+    if (item.isSeries === true) return "series";
+    if (item.isMovie === true) return "movie";
+    return "movie";
+  }
+
+  function getPoster(item) {
+    // senin "sadece resim eklemek" dediğin yer tam burası.
+    // collection dosyanda poster linki varsa gösterecek.
+    const p =
+      item.poster ||
+      item.posterUrl ||
+      item.posterURL ||
+      item.img ||
+      item.image ||
+      item.cover ||
+      item.thumb ||
+      "";
+    return (p && typeof p === "string") ? p : "";
+  }
+
+  // Eğer posterler relative ise (ör: "posters/ironman.jpg") düzgün bağla:
+  function resolvePoster(poster, baseDir) {
+    if (!poster) return "";
+    if (/^https?:\/\//i.test(poster)) return poster;
+    if (poster.startsWith("/")) return poster; // kökten verildiyse
+    // baseDir: "data/marvel/"
+    return baseDir + poster.replace(/^\.\//, "");
+  }
+
+  function safeJoin(baseDir, maybePath) {
+    // baseDir "data/marvel/"
+    // maybePath "./mcu.collection.js" veya "mcu.collection.js" veya zaten "data/..." olabilir
+    if (!maybePath) return "";
+    if (typeof maybePath !== "string") return "";
+    if (maybePath.startsWith("data/")) return maybePath;
+    if (maybePath.startsWith("/data/")) return maybePath.slice(1);
+    const clean = maybePath.replace(/^\.\//, "");
+    return baseDir + clean;
+  }
+
+  // ---------- UI ----------
+  function renderError(whereTitle, err) {
+    const screenList = $("#screen-list");
+    const screenDetail = $("#screen-detail");
+    if (screenDetail) screenDetail.classList.add("hidden");
+    if (!screenList) return;
+
     screenList.classList.remove("hidden");
-    screenDetail.classList.add("hidden");
-  } else {
-    screenList.classList.add("hidden");
-    screenDetail.classList.remove("hidden");
-  }
-}
+    screenList.innerHTML = "";
 
-function renderError(targetEl, title, err) {
-  targetEl.innerHTML = `
-    <div class="card" style="margin-top:16px;">
-      <h2 style="margin:0 0 8px 0;">${escapeHtml(title)}</h2>
-      <div style="opacity:.9; white-space:pre-wrap; font-size:14px;">
-        ${escapeHtml(String(err?.message || err))}
-      </div>
-    </div>
-  `;
-}
-
-function escapeHtml(s) {
-  return String(s)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-/* -----------------------------
-   Data loading
-   ----------------------------- */
-
-async function loadTabIndex(tab) {
-  // tab: "marvel" | "starwars"
-  // dosyalar: /data/marvel/marvel.index.js gibi
-  const path = `/data/${tab}/${tab}.index.js`;
-  return await loadExportDefaultJS(path);
-}
-
-async function getCategoryItems(tabIndex, categoryKey, tab) {
-  // tabIndex.libs[categoryKey] array ya da path olabilir
-  const lib = tabIndex.libs?.[categoryKey];
-  if (!lib) return [];
-
-  if (Array.isArray(lib)) return lib;
-
-  // string path gelirse
-  if (typeof lib === "string") {
-    const path = lib.startsWith("/") ? lib : `/data/${tab}/${lib}`;
-    const data = await loadExportDefaultJS(path);
-    return Array.isArray(data) ? data : [];
+    screenList.appendChild(el("h2", "h2", "Anasayfa yüklenirken hata oluştu."));
+    const msg = el("div", "muted", err?.message || String(err));
+    screenList.appendChild(msg);
   }
 
-  return [];
-}
+  function setActiveTab(tab) {
+    state.activeTab = tab;
 
-/* -----------------------------
-   Render: HOME / CATEGORY / DETAIL
-   ----------------------------- */
+    const btnMarvel = $("#tab-marvel");
+    const btnStar = $("#tab-starwars");
+    if (btnMarvel && btnStar) {
+      btnMarvel.classList.toggle("active", tab === "marvel");
+      btnStar.classList.toggle("active", tab === "starwars");
+    }
+  }
 
-async function renderHome(tab) {
-  showScreen("list");
+  function renderHome(indexObj, scopeTitle) {
+    const screenList = $("#screen-list");
+    const screenDetail = $("#screen-detail");
+    if (!screenList) return;
 
-  screenList.innerHTML = `
-    <div class="card">
-      <h1 style="margin:0 0 6px 0;">Koleksiyon</h1>
-      <div style="opacity:.8;">${tab === "marvel" ? "Marvel" : "Star Wars"} İzleme Takibi</div>
-      <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
-        <button class="btn" id="btn-home-tab">${tab === "marvel" ? "Marvel" : "Star Wars"} Kategorileri</button>
-      </div>
-      <div id="home-stats" style="margin-top:14px; opacity:.9;"></div>
-    </div>
+    if (screenDetail) screenDetail.classList.add("hidden");
+    screenList.classList.remove("hidden");
+    screenList.innerHTML = "";
 
-    <div id="home-categories" style="margin-top:14px;"></div>
-  `;
+    const h = el("h2", "h2", "Koleksiyon");
+    screenList.appendChild(h);
 
-  try {
-    const idx = await loadTabIndex(tab);
-    const store = loadStore();
+    const sub = el("div", "muted", `${scopeTitle} İzleme Takibi`);
+    screenList.appendChild(sub);
 
-    // toplam / izlenen hesapla
-    let total = 0;
-    let watched = 0;
+    // Progress (çok basit)
+    const total = countTotalItemsForScope(state.activeTab);
+    const done = countCheckedForScope(state.activeTab);
+    const pct = total ? Math.round((done / total) * 100) : 0;
 
-    for (const c of idx.categories || []) {
-      const items = await getCategoryItems(idx, c.key, tab);
-      total += items.length;
-      items.forEach((it, i) => {
-        const id = makeItemId(tab, c.key, i);
-        if (store[id]) watched += 1;
+    const box = el("div", "homebox");
+    box.appendChild(el("div", "muted", "Genel ilerleme"));
+    box.appendChild(el("div", "big", `%${pct}`));
+    box.appendChild(el("div", "muted", `${done} işaretli`));
+    screenList.appendChild(box);
+
+    // Kategori listesi
+    if (indexObj.categories.length) {
+      screenList.appendChild(el("h3", "h3", `${scopeTitle} Kategorileri`));
+      const list = el("div", "list");
+      indexObj.categories.forEach((cat) => {
+        const row = el("button", "row");
+        row.type = "button";
+        row.addEventListener("click", () => openCategory(cat.key));
+        const left = el("div", "row-left");
+        left.appendChild(el("div", "row-title", cat.title || cat.key));
+        left.appendChild(el("div", "row-sub", "Film / Dizi ayrımı"));
+        row.appendChild(left);
+
+        const right = el("div", "row-right");
+        const cnt = countItemsInCategory(state.activeTab, cat.key);
+        right.textContent = cnt ? `${cnt} öğe` : "";
+        row.appendChild(right);
+
+        list.appendChild(row);
       });
+      screenList.appendChild(list);
+    }
+  }
+
+  function renderCategoryList(title, baseDir) {
+    const screenList = $("#screen-list");
+    const screenDetail = $("#screen-detail");
+    if (!screenList) return;
+
+    if (screenDetail) screenDetail.classList.add("hidden");
+    screenList.classList.remove("hidden");
+    screenList.innerHTML = "";
+
+    const back = el("button", "back", "← Liste");
+    back.type = "button";
+    back.addEventListener("click", () => loadTabHome());
+    screenList.appendChild(back);
+
+    screenList.appendChild(el("h2", "h2", title));
+    screenList.appendChild(el("div", "muted", `${state.items.length} öğe`));
+
+    const list = el("div", "list");
+    state.items.forEach((it, idx) => {
+      const id = getItemId(it, idx, `${state.activeTab}:${state.activeCategory}`);
+      const checked = state.checked.has(id);
+
+      const row = el("div", "card");
+      const checkbox = el("input", "chk");
+      checkbox.type = "checkbox";
+      checkbox.checked = checked;
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) state.checked.add(id);
+        else state.checked.delete(id);
+        saveChecked();
+      });
+
+      const posterRaw = getPoster(it);
+      const poster = resolvePoster(posterRaw, baseDir);
+
+      const posterEl = el("div", "poster");
+      if (poster) {
+        const img = document.createElement("img");
+        img.src = poster;
+        img.alt = getItemTitle(it, idx);
+        img.loading = "lazy";
+        posterEl.appendChild(img);
+      } else {
+        posterEl.textContent = "—";
+      }
+
+      const info = el("div", "info");
+      info.appendChild(el("div", "title", getItemTitle(it, idx)));
+      info.appendChild(el("div", "sub", getItemType(it)));
+
+      row.appendChild(checkbox);
+      row.appendChild(posterEl);
+      row.appendChild(info);
+
+      list.appendChild(row);
+    });
+
+    screenList.appendChild(list);
+  }
+
+  // ---------- Counting helpers (for progress) ----------
+  const cacheCounts = { marvel: {}, starwars: {} };
+
+  function countTotalItemsForScope(scope) {
+    const idx = state.index[scope];
+    if (!idx) return 0;
+    let sum = 0;
+    idx.categories.forEach((c) => {
+      sum += countItemsInCategory(scope, c.key);
+    });
+    return sum;
+  }
+
+  function countCheckedForScope(scope) {
+    let n = 0;
+    for (const id of state.checked) {
+      if (id.startsWith(scope + ":")) n++;
+    }
+    return n;
+  }
+
+  function countItemsInCategory(scope, catKey) {
+    const key = `${scope}:${catKey}`;
+    if (cacheCounts[scope][key] != null) return cacheCounts[scope][key];
+
+    // Eğer daha önce yüklenmediyse hızlıca yüklemeye çalışır (UI bloklamadan).
+    // Home ekranında sayı göstermek için.
+    const idxObj = state.index[scope];
+    if (!idxObj) return 0;
+
+    const baseDir = scope === "marvel" ? "data/marvel/" : "data/starwars/";
+    const lib = idxObj.libs?.[catKey];
+    if (!lib) return 0;
+
+    // lib string olabilir veya zaten data array olabilir
+    if (Array.isArray(lib)) {
+      const cnt = normalizeCollection(lib).length;
+      cacheCounts[scope][key] = cnt;
+      return cnt;
     }
 
-    const pct = total ? Math.round((watched / total) * 100) : 0;
-    $("#home-stats").innerHTML = `
-      <div style="margin-top:4px;">Genel ilerleme</div>
-      <div style="font-size:20px; font-weight:700;">%${pct}</div>
-      <div style="opacity:.8;">${watched} işaretli / ${total} toplam</div>
-    `;
+    // string path ise: sayım için async yükleme, ama burada sync dönmek gerekiyor.
+    // Bu yüzden ilk geçişte 0 döner, sonraki home render’da güncellenir.
+    cacheCounts[scope][key] = 0;
+    (async () => {
+      try {
+        const url = safeJoin(baseDir, lib);
+        const raw = await loadExportDefaultJS(url);
+        const items = normalizeCollection(raw);
+        cacheCounts[scope][key] = items.length;
+        // Home tekrar render
+        if ((scope === "marvel" && state.activeTab === "marvel") || (scope === "starwars" && state.activeTab === "starwars")) {
+          renderHome(state.index[scope], scope === "marvel" ? "Marvel" : "Star Wars");
+        }
+      } catch {
+        cacheCounts[scope][key] = 0;
+      }
+    })();
 
-    const catWrap = $("#home-categories");
-    catWrap.innerHTML = (idx.categories || [])
-      .map((c) => {
-        return `
-          <button class="card" data-cat="${escapeHtml(c.key)}" style="text-align:left; width:100%; cursor:pointer;">
-            <div style="font-size:18px; font-weight:700;">${escapeHtml(c.title)}</div>
-            <div style="opacity:.75; margin-top:4px;">Listeyi aç</div>
-          </button>
-        `;
-      })
-      .join("");
-
-    catWrap.querySelectorAll("[data-cat]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const key = btn.getAttribute("data-cat");
-        state.view = "category";
-        state.categoryKey = key;
-        await renderCategory(tab, key);
-      });
-    });
-  } catch (e) {
-    renderError($("#home-categories"), "Anasayfa yüklenirken hata oluştu.", e);
+    return 0;
   }
-}
 
-async function renderCategory(tab, categoryKey) {
-  showScreen("list");
-
-  screenList.innerHTML = `
-    <div class="card">
-      <button class="btn" id="btn-back-home">← Liste</button>
-      <h2 id="cat-title" style="margin:12px 0 6px 0;"></h2>
-      <div id="cat-sub" style="opacity:.8;"></div>
-    </div>
-
-    <div id="items" style="margin-top:14px;"></div>
-  `;
-
-  $("#btn-back-home").addEventListener("click", async () => {
-    state.view = "home";
-    state.categoryKey = null;
-    await renderHome(tab);
-  });
-
-  try {
-    const idx = await loadTabIndex(tab);
-    const cat = (idx.categories || []).find((c) => c.key === categoryKey);
-    $("#cat-title").textContent = cat?.title || categoryKey;
-
-    const items = await getCategoryItems(idx, categoryKey, tab);
-    $("#cat-sub").textContent = `${items.length} öğe`;
-
-    const store = loadStore();
-    const wrap = $("#items");
-
-    wrap.innerHTML = items
-      .map((it, i) => {
-        const id = makeItemId(tab, categoryKey, i);
-        const checked = !!store[id];
-
-        const title = it.title || it.name || `Öğe ${i + 1}`;
-        const type = it.type || it.kind || ""; // Film / Dizi vs
-        const year = it.year ? ` • ${it.year}` : "";
-
-        return `
-          <div class="card item" data-idx="${i}" style="display:flex; align-items:center; gap:12px; cursor:pointer;">
-            <input type="checkbox" data-check="${i}" ${checked ? "checked" : ""} style="transform:scale(1.2); cursor:pointer;" />
-            <div style="flex:1;">
-              <div style="font-weight:800; font-size:18px;">${escapeHtml(title)}</div>
-              <div style="opacity:.75; margin-top:2px;">${escapeHtml(type)}${escapeHtml(year)}</div>
-            </div>
-          </div>
-        `;
-      })
-      .join("");
-
-    // checkbox click (kartı açmadan)
-    wrap.querySelectorAll("[data-check]").forEach((cb) => {
-      cb.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        const i = Number(cb.getAttribute("data-check"));
-        const id = makeItemId(tab, categoryKey, i);
-        const s = loadStore();
-        s[id] = cb.checked;
-        saveStore(s);
-      });
-    });
-
-    // kart click -> detail
-    wrap.querySelectorAll(".item").forEach((row) => {
-      row.addEventListener("click", async () => {
-        const i = Number(row.getAttribute("data-idx"));
-        state.view = "detail";
-        state.itemKey = i;
-        await renderDetail(tab, categoryKey, i);
-      });
-    });
-  } catch (e) {
-    renderError($("#items"), "Liste yüklenirken hata oluştu.", e);
+  // ---------- Main flows ----------
+  async function loadTabHome() {
+    try {
+      const scope = state.activeTab;
+      const idxUrl = scope === "marvel" ? PATHS.marvelIndex : PATHS.starwarsIndex;
+      const scopeTitle = scope === "marvel" ? "Marvel" : "Star Wars";
+      const idxRaw = await loadExportDefaultJS(idxUrl);
+      state.index[scope] = normalizeIndex(idxRaw);
+      renderHome(state.index[scope], scopeTitle);
+    } catch (err) {
+      renderError("Home", err);
+    }
   }
-}
 
-async function renderDetail(tab, categoryKey, idxInCat) {
-  showScreen("detail");
+  async function openCategory(catKey) {
+    const scope = state.activeTab;
+    const idxObj = state.index[scope];
+    if (!idxObj) return;
 
-  screenDetail.innerHTML = `
-    <div class="card">
-      <button class="btn" id="btn-back-cat">← Liste</button>
-      <div id="detail-content" style="margin-top:12px;"></div>
-    </div>
-  `;
+    const baseDir = scope === "marvel" ? "data/marvel/" : "data/starwars/";
+    state.activeCategory = catKey;
 
-  $("#btn-back-cat").addEventListener("click", async () => {
-    state.view = "category";
-    await renderCategory(tab, categoryKey);
-  });
+    try {
+      const lib = idxObj.libs?.[catKey];
+      if (!lib) throw new Error(`Kategori bulunamadı: ${catKey}`);
 
-  try {
-    const tabIndex = await loadTabIndex(tab);
-    const items = await getCategoryItems(tabIndex, categoryKey, tab);
-    const it = items[idxInCat];
+      // lib doğrudan array verilmişse
+      if (Array.isArray(lib)) {
+        state.items = normalizeCollection(lib);
+        renderCategoryList((idxObj.categories.find(c => c.key === catKey)?.title) || catKey, baseDir);
+        return;
+      }
 
-    if (!it) throw new Error("Öğe bulunamadı.");
+      // lib string yol ise
+      const url = safeJoin(baseDir, lib);
+      const raw = await loadExportDefaultJS(url);
+      state.items = normalizeCollection(raw);
 
-    const store = loadStore();
-    const id = makeItemId(tab, categoryKey, idxInCat);
-    const checked = !!store[id];
-
-    const title = it.title || it.name || "Başlık yok";
-    const type = it.type || it.kind || "";
-    const year = it.year ? `${it.year}` : "";
-
-    $("#detail-content").innerHTML = `
-      <h2 style="margin:0 0 8px 0;">${escapeHtml(title)}</h2>
-      <div style="opacity:.8; margin-bottom:12px;">${escapeHtml(type)} ${year ? "• " + escapeHtml(year) : ""}</div>
-
-      <label style="display:flex; gap:10px; align-items:center; cursor:pointer;">
-        <input type="checkbox" id="detail-check" ${checked ? "checked" : ""} style="transform:scale(1.2);" />
-        <span>İzlendi olarak işaretle</span>
-      </label>
-
-      ${it.note ? `<div style="margin-top:12px; opacity:.85;">${escapeHtml(it.note)}</div>` : ""}
-    `;
-
-    $("#detail-check").addEventListener("change", (e) => {
-      const s = loadStore();
-      s[id] = e.target.checked;
-      saveStore(s);
-    });
-  } catch (e) {
-    renderError($("#detail-content"), "Detay yüklenirken hata oluştu.", e);
+      const catTitle = (idxObj.categories.find(c => c.key === catKey)?.title) || catKey;
+      renderCategoryList(catTitle, baseDir);
+    } catch (err) {
+      renderError("Category", err);
+    }
   }
-}
 
-/* -----------------------------
-   Init
-   ----------------------------- */
+  function bindUI() {
+    const btnMarvel = $("#tab-marvel");
+    const btnStar = $("#tab-starwars");
+    if (btnMarvel) btnMarvel.addEventListener("click", () => { setActiveTab("marvel"); loadTabHome(); });
+    if (btnStar) btnStar.addEventListener("click", () => { setActiveTab("starwars"); loadTabHome(); });
+  }
 
-function bindTabs() {
-  btnTabMarvel?.addEventListener("click", async () => {
+  // ---------- Boot ----------
+  function boot() {
+    loadChecked();
+    bindUI();
     setActiveTab("marvel");
-    state.view = "home";
-    await renderHome("marvel");
-  });
+    loadTabHome();
+  }
 
-  btnTabStarwars?.addEventListener("click", async () => {
-    setActiveTab("starwars");
-    state.view = "home";
-    await renderHome("starwars");
-  });
-}
-
-async function boot() {
-  bindTabs();
-  setActiveTab("marvel");
-  await renderHome("marvel");
-}
-
-boot();
+  document.addEventListener("DOMContentLoaded", boot);
+})();
