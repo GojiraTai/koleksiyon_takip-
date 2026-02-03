@@ -1,0 +1,18 @@
+export default [
+  { id:"mut_001", title:"X-Men", kind:"movie" },
+  { id:"mut_002", title:"X2: X-Men United", kind:"movie" },
+  { id:"mut_003", title:"X-Men: The Last Stand", kind:"movie" },
+  { id:"mut_004", title:"X-Men Origins: Wolverine", kind:"movie" },
+  { id:"mut_005", title:"X-Men: First Class", kind:"movie" },
+  { id:"mut_006", title:"The Wolverine", kind:"movie" },
+  { id:"mut_007", title:"X-Men: Days of Future Past", kind:"movie" },
+  { id:"mut_008", title:"Deadpool", kind:"movie" },
+  { id:"mut_009", title:"X-Men: Apocalypse", kind:"movie" },
+  { id:"mut_010", title:"Logan", kind:"movie" },
+  { id:"mut_011", title:"Legion", kind:"series" },
+  { id:"mut_012", title:"The Gifted", kind:"series" },
+  { id:"mut_013", title:"Deadpool 2", kind:"movie" },
+  { id:"mut_014", title:"Dark Phoenix", kind:"movie" },
+  { id:"mut_015", title:"The New Mutants", kind:"movie" },
+  { id:"mut_016", title:"Deadpool & Wolverine", kind:"movie" },
+];
