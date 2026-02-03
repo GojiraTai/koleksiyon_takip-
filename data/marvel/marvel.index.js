@@ -1,23 +1,25 @@
-import mcu from "./mcu.collection.js";
-import mutant from "./mutant.collection.js";
-import sony from "./sony.collection.js";
-import voids from "./void.collection.js";
-import lego from "./lego.collection.js";
-import classics from "./classics.collection.js";
-import animated from "./animated.collection.js";
-import anime from "./anime.collection.js";
-
 export default {
   title: "Marvel",
   categories: [
-    { key:"mcu", title:"MCU" },
-    { key:"mutant", title:"Mutant Saga" },
-    { key:"sony", title:"Sony's Spider-Man Universe" },
-    { key:"void", title:"The Void" },
-    { key:"lego", title:"LEGO" },
-    { key:"classics", title:"Marvel Klasiks" },
-    { key:"animated", title:"Marvel Animated Series" },
-    { key:"anime", title:"Marvel Anime" },
+    { key: "mcu",      title: "MCU",                    file: "./data/marvel/mcu.collection.js" },
+    { key: "mutant",   title: "Mutant Saga",            file: "./data/marvel/mutant.collection.js" },
+    { key: "sony",     title: "Sony's Spider-Man Universe", file: "./data/marvel/sony.collection.js" },
+    { key: "void",     title: "The Void",               file: "./data/marvel/void.collection.js" },
+    { key: "lego",     title: "LEGO",                   file: "./data/marvel/lego.collection.js" },
+    { key: "classics", title: "Marvel Klasikleri",      file: "./data/marvel/classics.collection.js" },
+    { key: "animated", title: "Marvel Animations",      file: "./data/marvel/animated.collection.js" },
+    { key: "anime",    title: "Marvel Anime",           file: "./data/marvel/anime.collection.js" }
   ],
-  libs: { mcu, mutant, sony, void: voids, lego, classics, animated, anime }
+
+  // app.js eski "libs" yapısını da arıyorsa diye geriye dönük uyumluluk:
+  libs: {
+    mcu: "./data/marvel/mcu.collection.js",
+    mutant: "./data/marvel/mutant.collection.js",
+    sony: "./data/marvel/sony.collection.js",
+    void: "./data/marvel/void.collection.js",
+    lego: "./data/marvel/lego.collection.js",
+    classics: "./data/marvel/classics.collection.js",
+    animated: "./data/marvel/animated.collection.js",
+    anime: "./data/marvel/anime.collection.js"
+  }
 };
