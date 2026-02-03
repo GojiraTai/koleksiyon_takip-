@@ -1,166 +1,93 @@
 export default [
-  // PHASE 1
-  {
-    id: "ironman1",
-    title: "Iron Man",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/78lPtwv72eTNqFW9COBYI0dWDJa.jpg"
-  },
-  {
-    id: "hulk",
-    title: "The Incredible Hulk",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/gKzYx79y0AQTL4UAk1cBQJ3nvrm.jpg"
-  },
-  {
-    id: "ironman2",
-    title: "Iron Man 2",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/6WBeq4fCfn7AN0o21W9qNcRF2l9.jpg"
-  },
-  {
-    id: "thor1",
-    title: "Thor",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/prSfAi1xGrhLQNxVSUFh61xQ4Qy.jpg"
-  },
-  {
-    id: "cap1",
-    title: "Captain America: The First Avenger",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/vSNxAJTlD0r02V9sPYpOjqDZXUK.jpg"
-  },
-  {
-    id: "avengers1",
-    title: "The Avengers",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/RYMX2wcKCBAr24UyPD7xwmjaTn.jpg"
-  },
+  // --- MCU FILMS + ONE-SHOTS + SERIES-SEASONS IN YOUR WATCH ORDER ---
 
-  // PHASE 2
-  {
-    id: "ironman3",
-    title: "Iron Man 3",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/qhPtAc1TKbMPqNvcdXSOn9Bn7hZ.jpg"
-  },
-  {
-    id: "thor2",
-    title: "Thor: The Dark World",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/wp6OxE4poJ4G7c0U2ZIXasTSMR7.jpg"
-  },
-  {
-    id: "cap2",
-    title: "Captain America: The Winter Soldier",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/tVFRpFw3xTedgPGqxW0AOI8Qhh0.jpg"
-  },
-  {
-    id: "gotg1",
-    title: "Guardians of the Galaxy",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/r7vmZjiyZw9rpJMQJdXpjgiCOk9.jpg"
-  },
-  {
-    id: "avengers2",
-    title: "Avengers: Age of Ultron",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/4ssDuvEDkSArWEdyBl2X5EHvYKU.jpg"
-  },
-  {
-    id: "antman1",
-    title: "Ant-Man",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/rQRnQfUl3kfp78nCWq8Ks04vnq1.jpg"
-  },
+  { id:"mcu_iron_man", kind:"movie", title:"Iron Man" },
+  { id:"mcu_the_incredible_hulk", kind:"movie", title:"The Incredible Hulk" },
+  { id:"mcu_iron_man_2", kind:"movie", title:"Iron Man 2" },
+  { id:"mcu_thor", kind:"movie", title:"Thor" },
+  { id:"mcu_captain_america_the_first_avenger", kind:"movie", title:"Captain America: The First Avenger" },
 
-  // PHASE 3
-  {
-    id: "civilwar",
-    title: "Captain America: Civil War",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/rAGiXaUfPzY7CDEyNKUofk3Kw2e.jpg"
-  },
-  {
-    id: "doctorstrange1",
-    title: "Doctor Strange",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/uGBVj3bEbCoZbDjjl9wTxcygko1.jpg"
-  },
-  {
-    id: "gotg2",
-    title: "Guardians of the Galaxy Vol. 2",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/y4MBh0EjBlMuOzv9axM4qJlmhzz.jpg"
-  },
-  {
-    id: "spiderman1",
-    title: "Spider-Man: Homecoming",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/c24sv2weTHPsmDa7jEMN0m2P3RT.jpg"
-  },
-  {
-    id: "thor3",
-    title: "Thor: Ragnarok",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/rzRwTcFvttcN1ZpX2xv4j3tSdJu.jpg"
-  },
-  {
-    id: "blackpanther",
-    title: "Black Panther",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/uxzzxijgPIY7slzFvMotPv8wjKA.jpg"
-  },
-  {
-    id: "infinitywar",
-    title: "Avengers: Infinity War",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/7WsyChQLEftFiDOVTGkv3hFpyyt.jpg"
-  },
-  {
-    id: "endgame",
-    title: "Avengers: Endgame",
-    type: "movie",
-    poster: "https://image.tmdb.org/t/p/w300/or06FN3Dka5tukK1e9sl16pB3iy.jpg"
-  },
+  // One-shots (OMDb'de bulunmazsa poster olmayabilir, ama listede kalır)
+  { id:"mcu_the_consultant", kind:"oneshot", title:"Marvel One-Shot: The Consultant" },
+  { id:"mcu_thors_hammer", kind:"oneshot", title:"Marvel One-Shot: A Funny Thing Happened on the Way to Thor's Hammer" },
 
-  // DISNEY+ SERIES
-  {
-    id: "wandavision",
-    title: "WandaVision",
-    type: "series",
-    poster: "https://image.tmdb.org/t/p/w300/glKDfE6btIRcVB5zrjspRIs4r52.jpg",
-    seasons: [
-      { season: 1, episodes: [] }
-    ]
-  },
-  {
-    id: "loki",
-    title: "Loki",
-    type: "series",
-    poster: "https://image.tmdb.org/t/p/w300/kEl2t3OhXc3Zb9FBh1AuYzRTgZp.jpg",
-    seasons: [
-      { season: 1, episodes: [] },
-      { season: 2, episodes: [] }
-    ]
-  },
-  {
-    id: "falconws",
-    title: "The Falcon and the Winter Soldier",
-    type: "series",
-    poster: "https://image.tmdb.org/t/p/w300/6kbAMLteGO8yyewYau6bJ683sw7.jpg",
-    seasons: [
-      { season: 1, episodes: [] }
-    ]
-  },
-  {
-    id: "moonknight",
-    title: "Moon Knight",
-    type: "series",
-    poster: "https://image.tmdb.org/t/p/w300/YksR65as1ppF2N48TJAh2PLamX.jpg",
-    seasons: [
-      { season: 1, episodes: [] }
-    ]
-  }
+  { id:"mcu_the_avengers", kind:"movie", title:"The Avengers" },
+  { id:"mcu_item_47", kind:"oneshot", title:"Marvel One-Shot: Item 47" },
+  { id:"mcu_iron_man_3", kind:"movie", title:"Iron Man 3" },
+  { id:"mcu_agent_carter_oneshot", kind:"oneshot", title:"Marvel One-Shot: Agent Carter" },
+  { id:"mcu_thor_the_dark_world", kind:"movie", title:"Thor: The Dark World" },
+  { id:"mcu_all_hail_the_king", kind:"oneshot", title:"Marvel One-Shot: All Hail the King" },
+  { id:"mcu_captain_america_the_winter_soldier", kind:"movie", title:"Captain America: The Winter Soldier" },
+  { id:"mcu_guardians_of_the_galaxy", kind:"movie", title:"Guardians of the Galaxy" },
+
+  // Netflix-era in watch order as SEASONS (episodes will be checked one by one)
+  { id:"mcu_daredevil_s1", kind:"season", seriesTitle:"Daredevil", seasonNumber:1 },
+  { id:"mcu_avengers_age_of_ultron", kind:"movie", title:"Avengers: Age of Ultron" },
+  { id:"mcu_ant_man", kind:"movie", title:"Ant-Man" },
+  { id:"mcu_jessica_jones_s1", kind:"season", seriesTitle:"Jessica Jones", seasonNumber:1 },
+  { id:"mcu_daredevil_s2", kind:"season", seriesTitle:"Daredevil", seasonNumber:2 },
+  { id:"mcu_captain_america_civil_war", kind:"movie", title:"Captain America: Civil War" },
+  { id:"mcu_luke_cage_s1", kind:"season", seriesTitle:"Luke Cage", seasonNumber:1 },
+  { id:"mcu_doctor_strange", kind:"movie", title:"Doctor Strange" },
+  { id:"mcu_iron_fist_s1", kind:"season", seriesTitle:"Iron Fist", seasonNumber:1 },
+  { id:"mcu_guardians_of_the_galaxy_vol_2", kind:"movie", title:"Guardians of the Galaxy Vol. 2" },
+  { id:"mcu_spider_man_homecoming", kind:"movie", title:"Spider-Man: Homecoming" },
+  { id:"mcu_the_defenders", kind:"season", seriesTitle:"The Defenders", seasonNumber:1 },
+  { id:"mcu_inhumans", kind:"season", seriesTitle:"Inhumans", seasonNumber:1 },
+  { id:"mcu_thor_ragnarok", kind:"movie", title:"Thor: Ragnarok" },
+  { id:"mcu_the_punisher_s1", kind:"season", seriesTitle:"The Punisher", seasonNumber:1 },
+  { id:"mcu_black_panther", kind:"movie", title:"Black Panther" },
+  { id:"mcu_jessica_jones_s2", kind:"season", seriesTitle:"Jessica Jones", seasonNumber:2 },
+  { id:"mcu_avengers_infinity_war", kind:"movie", title:"Avengers: Infinity War" },
+  { id:"mcu_luke_cage_s2", kind:"season", seriesTitle:"Luke Cage", seasonNumber:2 },
+  { id:"mcu_ant_man_and_the_wasp", kind:"movie", title:"Ant-Man and the Wasp" },
+  { id:"mcu_iron_fist_s2", kind:"season", seriesTitle:"Iron Fist", seasonNumber:2 },
+  { id:"mcu_daredevil_s3", kind:"season", seriesTitle:"Daredevil", seasonNumber:3 },
+  { id:"mcu_the_punisher_s2", kind:"season", seriesTitle:"The Punisher", seasonNumber:2 },
+  { id:"mcu_captain_marvel", kind:"movie", title:"Captain Marvel" },
+  { id:"mcu_avengers_endgame", kind:"movie", title:"Avengers: Endgame" },
+  { id:"mcu_jessica_jones_s3", kind:"season", seriesTitle:"Jessica Jones", seasonNumber:3 },
+  { id:"mcu_spider_man_far_from_home", kind:"movie", title:"Spider-Man: Far From Home" },
+
+  // Disney+ era
+  { id:"mcu_wandavision", kind:"season", seriesTitle:"WandaVision", seasonNumber:1 },
+  { id:"mcu_falcon_ws", kind:"season", seriesTitle:"The Falcon and the Winter Soldier", seasonNumber:1 },
+  { id:"mcu_loki_s1", kind:"season", seriesTitle:"Loki", seasonNumber:1 },
+  { id:"mcu_black_widow", kind:"movie", title:"Black Widow" },
+  { id:"mcu_what_if_s1", kind:"season", seriesTitle:"What If...?", seasonNumber:1 },
+  { id:"mcu_shang_chi", kind:"movie", title:"Shang-Chi and the Legend of the Ten Rings" },
+  { id:"mcu_eternals", kind:"movie", title:"Eternals" },
+  { id:"mcu_hawkeye", kind:"season", seriesTitle:"Hawkeye", seasonNumber:1 },
+  { id:"mcu_spider_man_no_way_home", kind:"movie", title:"Spider-Man: No Way Home" },
+  { id:"mcu_moon_knight", kind:"season", seriesTitle:"Moon Knight", seasonNumber:1 },
+  { id:"mcu_doctor_strange_mom", kind:"movie", title:"Doctor Strange in the Multiverse of Madness" },
+  { id:"mcu_ms_marvel", kind:"season", seriesTitle:"Ms. Marvel", seasonNumber:1 },
+  { id:"mcu_thor_love_and_thunder", kind:"movie", title:"Thor: Love and Thunder" },
+  { id:"mcu_she_hulk", kind:"season", seriesTitle:"She-Hulk: Attorney at Law", seasonNumber:1 },
+  { id:"mcu_werewolf_by_night", kind:"special", title:"Werewolf by Night" },
+  { id:"mcu_black_panther_wakanda_forever", kind:"movie", title:"Black Panther: Wakanda Forever" },
+  { id:"mcu_gotg_holiday_special", kind:"special", title:"The Guardians of the Galaxy Holiday Special" },
+  { id:"mcu_ant_man_quantumania", kind:"movie", title:"Ant-Man and the Wasp: Quantumania" },
+  { id:"mcu_guardians_vol3", kind:"movie", title:"Guardians of the Galaxy Vol. 3" },
+  { id:"mcu_secret_invasion", kind:"season", seriesTitle:"Secret Invasion", seasonNumber:1 },
+  { id:"mcu_loki_s2", kind:"season", seriesTitle:"Loki", seasonNumber:2 },
+  { id:"mcu_the_marvels", kind:"movie", title:"The Marvels" },
+  { id:"mcu_what_if_s2", kind:"season", seriesTitle:"What If...?", seasonNumber:2 },
+  { id:"mcu_echo", kind:"season", seriesTitle:"Echo", seasonNumber:1 },
+
+  // X-Men '97 is listed by you as MCU bağlantılı
+  { id:"mcu_xmen_97", kind:"season", seriesTitle:"X-Men '97", seasonNumber:1 },
+
+  { id:"mcu_deadpool_and_wolverine", kind:"movie", title:"Deadpool & Wolverine" },
+  { id:"mcu_agatha_all_along", kind:"season", seriesTitle:"Agatha All Along", seasonNumber:1 },
+
+  // Upcoming/unknown in OMDb may not resolve yet, but list stays:
+  { id:"mcu_captain_america_brave_new_world", kind:"movie", title:"Captain America: Brave New World" },
+  { id:"mcu_daredevil_born_again_s1", kind:"season", seriesTitle:"Daredevil: Born Again", seasonNumber:1 },
+  { id:"mcu_thunderbolts", kind:"movie", title:"Thunderbolts" },
+  { id:"mcu_fantastic_four_first_steps", kind:"movie", title:"The Fantastic Four: First Steps" },
+  { id:"mcu_ironheart_s1", kind:"season", seriesTitle:"Ironheart", seasonNumber:1 },
+  { id:"mcu_eyes_of_wakanda_s1", kind:"season", seriesTitle:"Eyes of Wakanda", seasonNumber:1 },
+  { id:"mcu_marvel_zombies_s1", kind:"season", seriesTitle:"Marvel Zombies", seasonNumber:1 },
+  { id:"mcu_wonder_man_s1", kind:"season", seriesTitle:"Wonder Man", seasonNumber:1 }
 ];
