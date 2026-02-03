@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Koleksiyon Takip</title>
+</head>
+<body>
+  <h1>Koleksiyon Takip</h1>
+
+  <input id="itemInput" type="text" placeholder="Ürün adı yaz" />
+  <button onclick="ekle()">Ekle</button>
+
+  <ul id="liste"></ul>
+
+  <script>
+    function ekle() {
+      const input = document.getElementById("itemInput");
+      const liste = document.getElementById("liste");
+      const deger = input.value.trim();
+      if (!deger) return;
+
+      const li = document.createElement("li");
+      li.textContent = deger;
+      liste.appendChild(li);
+
+      input.value = "";
+      input.focus();
+    }
+  </script>
+</body>
+</html>
